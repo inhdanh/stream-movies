@@ -243,10 +243,19 @@ async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
   return jobId;
 }
 
-function getTranscodeStatus(filename) {
+function getTranscodeStatus(filename, outputBaseDir) {
   if (transcodeJobs.has(filename)) {
     return transcodeJobs.get(filename);
   }
+
+  // If not in active jobs, check if it already exists on disk
+  if (outputBaseDir) {
+    const masterPath = path.join(outputBaseDir, filename, 'master.m3u8');
+    if (fs.existsSync(masterPath)) {
+      return { status: 'completed', progress: 100 };
+    }
+  }
+
   return { status: 'idle', progress: 0 };
 }
 

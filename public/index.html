@@ -144,6 +144,7 @@
                 <div class="absolute top-4 left-4 bg-black/50 backdrop-blur-md px-3 py-1 rounded-lg text-xs border border-white/10 font-medium">HLS Player</div>
             </div>
 
+
         </div>
     </div>
 
@@ -173,12 +174,29 @@
                     return;
                 }
 
-                data.movies.forEach(movie => {
+                data.movies.forEach(movieObj => {
+                    // Safety check: handle both old (string) and new (object) formats if necessary
+                    const movieName = typeof movieObj === 'string' ? movieObj : movieObj.name;
+                    const isReady = typeof movieObj === 'object' ? movieObj.isTranscoded : false;
+                    
                     const btn = document.createElement('button');
-                    btn.className = 'w-full text-left p-3 rounded-xl glass-hover transition-colors text-sm font-medium truncate border border-transparent focus:outline-none focus:border-brand-500';
-                    btn.title = movie;
-                    btn.textContent = movie;
-                    btn.onclick = () => selectMovie(movie, btn);
+                    btn.className = 'w-full text-left p-3 rounded-xl glass-hover transition-colors text-sm font-medium flex justify-between items-center border border-transparent focus:outline-none focus:border-brand-500 group';
+                    btn.title = movieName;
+                    
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'truncate pr-2';
+                    nameSpan.textContent = movieName;
+                    
+                    btn.appendChild(nameSpan);
+                    
+                    if (isReady) {
+                        const badge = document.createElement('span');
+                        badge.className = 'bg-green-500/20 text-green-400 text-[10px] px-2 py-0.5 rounded-full border border-green-500/30 flex-shrink-0';
+                        badge.textContent = 'READY';
+                        btn.appendChild(badge);
+                    }
+                    
+                    btn.onclick = () => selectMovie(movieName, btn);
                     movieListEl.appendChild(btn);
                 });
             } catch (err) {
@@ -361,6 +379,8 @@
                     console.log('Manifest parsed. Available audio tracks:', hls.audioTracks);
                     console.log('Available subtitle tracks:', hls.subtitleTracks);
                 });
+
+
                 hls.on(Hls.Events.ERROR, function (event, data) {
                     if (data.fatal) {
                         switch (data.type) {
@@ -383,6 +403,8 @@
                 videoPlayer.src = m3u8Url;
             }
         }
+
+
 
         function stopPlayer() {
             playerContainer.classList.add('hidden');

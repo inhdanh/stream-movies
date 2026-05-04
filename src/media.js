@@ -22,7 +22,7 @@ const LANGUAGE_MAP = {
 /**
  * Scan directory for movies
  */
-async function scanMovies(dirPath) {
+async function scanMovies(dirPath, hlsOutputDir) {
   return new Promise((resolve, reject) => {
     fs.readdir(dirPath, { withFileTypes: true }, (err, files) => {
       if (err) {
@@ -34,7 +34,15 @@ async function scanMovies(dirPath) {
 
       const movies = files
         .filter(dirent => dirent.isFile() && VIDEO_EXTENSIONS.includes(path.extname(dirent.name).toLowerCase()))
-        .map(dirent => dirent.name);
+        .map(dirent => {
+          const name = dirent.name;
+          let isTranscoded = false;
+          if (hlsOutputDir) {
+            const masterPath = path.join(hlsOutputDir, name, 'master.m3u8');
+            isTranscoded = fs.existsSync(masterPath);
+          }
+          return { name, isTranscoded };
+        });
       
       resolve(movies);
     });

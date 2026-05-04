@@ -25,7 +25,7 @@ app.use(express.static('public')); // Serve the web UI
 // 1. Get list of movies
 app.get('/movies', async (req, res) => {
   try {
-    const movies = await scanMovies(MOVIES_DIR);
+    const movies = await scanMovies(MOVIES_DIR, HLS_OUTPUT_DIR);
     res.json({ movies });
   } catch (error) {
     console.error('Error scanning movies:', error);
@@ -72,7 +72,7 @@ app.post('/movies/:filename/transcode', async (req, res) => {
 // 4. Get transcode status
 app.get('/movies/:filename/transcode/status', (req, res) => {
   const filename = req.params.filename;
-  const status = getTranscodeStatus(filename);
+  const status = getTranscodeStatus(filename, HLS_OUTPUT_DIR);
   res.json(status);
 });
 
