@@ -98,7 +98,12 @@ async function getMediaInfo(filePath) {
           if (!streamInfo.title) {
             streamInfo.title = language;
           }
-          info.subtitle.push(streamInfo);
+          
+          // Deduplicate: only add if we haven't seen this language and title combination
+          const subKey = `${streamInfo.languageCode}_${streamInfo.title}`;
+          if (!info.subtitle.some(s => `${s.languageCode}_${s.title}` === subKey)) {
+            info.subtitle.push(streamInfo);
+          }
         }
       });
 
