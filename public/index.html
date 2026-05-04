@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamTV HLS Transcoder</title>
+    <!-- TailwindCSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- HLS.js for web player -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            500: '#6366f1', // Indigo
+                            600: '#4f46e5',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            color: #f8fafc;
+            min-height: 100vh;
+        }
+        .glass {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .glass-hover:hover {
+            background: rgba(51, 65, 85, 0.8);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.5); 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(99, 102, 241, 0.5); 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(99, 102, 241, 0.8); 
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 flex flex-col items-center">
+
+    <div class="w-full max-w-6xl flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-cyan-400 mb-2">StreamTV Admin</h1>
+            <p class="text-slate-400 text-sm">HLS Transcoding & Streaming Dashboard</p>
+        </div>
+    </div>
+
+    <div class="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        <!-- Left Column: Movie List -->
+        <div class="lg:col-span-1 glass rounded-2xl p-6 flex flex-col h-[700px]">
+            <h2 class="text-xl font-semibold mb-4 text-indigo-300">Local Movies (D:/Movies)</h2>
+            <div id="loading-movies" class="animate-pulse flex space-x-4">
+                <div class="flex-1 space-y-4 py-1">
+                    <div class="h-4 bg-slate-700 rounded w-3/4"></div>
+                    <div class="h-4 bg-slate-700 rounded"></div>
+                    <div class="h-4 bg-slate-700 rounded w-5/6"></div>
+                </div>
+            </div>
+            <div id="movie-list" class="overflow-y-auto flex-1 space-y-2 pr-2">
+                <!-- Movie items will be injected here -->
+            </div>
+        </div>
+
+        <!-- Right Column: Details & Player -->
+        <div class="lg:col-span-2 flex flex-col space-y-6">
+            
+            <!-- Action Panel -->
+            <div class="glass rounded-2xl p-6 relative overflow-hidden">
+                <div id="empty-state" class="text-center py-12">
+                    <svg class="w-16 h-16 text-slate-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"></path></svg>
+                    <p class="text-slate-400">Select a movie from the list to view details or transcode.</p>
+                </div>
+
+                <div id="detail-state" class="hidden">
+                    <h2 id="movie-title" class="text-2xl font-bold mb-2 truncate"></h2>
+                    <div class="flex items-center space-x-4 mb-6 text-sm text-slate-300">
+                        <span id="movie-duration" class="bg-slate-800 px-3 py-1 rounded-full border border-slate-700"></span>
+                        <span id="movie-video-codec" class="bg-slate-800 px-3 py-1 rounded-full border border-slate-700"></span>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
+                            <h3 class="text-xs uppercase tracking-wider text-slate-500 mb-2 font-semibold">Audio Tracks</h3>
+                            <ul id="audio-list" class="text-sm space-y-1 text-slate-300 list-disc list-inside"></ul>
+                        </div>
+                        <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
+                            <h3 class="text-xs uppercase tracking-wider text-slate-500 mb-2 font-semibold">Subtitle Tracks</h3>
+                            <ul id="sub-list" class="text-sm space-y-1 text-slate-300 list-disc list-inside"></ul>
+                        </div>
+                    </div>
+
+                    <!-- Transcode Controls -->
+                    <div id="transcode-controls" class="pt-4 border-t border-slate-700/50 flex flex-col gap-4">
+                        <div class="flex items-center justify-between">
+                            <button id="btn-transcode" class="bg-gradient-to-r from-brand-600 to-cyan-500 hover:from-brand-500 hover:to-cyan-400 text-white font-medium py-2.5 px-6 rounded-xl transition-all shadow-lg shadow-brand-500/30 flex items-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                Start Transcoding to HLS
+                            </button>
+                            <button id="btn-copy-m3u8" class="hidden bg-slate-700 hover:bg-slate-600 text-white font-medium py-2.5 px-6 rounded-xl transition-all border border-slate-600 flex items-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+                                Copy M3U8 Link
+                            </button>
+                        </div>
+                        
+                        <!-- Progress Bar -->
+                        <div id="progress-container" class="hidden w-full bg-slate-800 rounded-full h-3 border border-slate-700 relative overflow-hidden">
+                            <div id="progress-bar" class="bg-gradient-to-r from-brand-500 to-cyan-400 h-3 rounded-full transition-all duration-500 ease-out" style="width: 0%"></div>
+                        </div>
+                        <p id="progress-text" class="text-xs text-slate-400 text-right hidden">0%</p>
+                        <p id="error-text" class="text-xs text-red-400 hidden"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Web Player -->
+            <div id="player-container" class="glass rounded-2xl overflow-hidden hidden aspect-video relative shadow-2xl">
+                <video id="video-player" class="w-full h-full bg-black" controls preload="none" crossorigin="anonymous"></video>
+                <div class="absolute top-4 left-4 bg-black/50 backdrop-blur-md px-3 py-1 rounded-lg text-xs border border-white/10 font-medium">HLS Player</div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        const baseUrl = window.location.origin;
+        let selectedMovie = null;
+        let pollInterval = null;
+        let hls = null;
+
+        // Elements
+        const movieListEl = document.getElementById('movie-list');
+        const loadingMoviesEl = document.getElementById('loading-movies');
+        const emptyStateEl = document.getElementById('empty-state');
+        const detailStateEl = document.getElementById('detail-state');
+        const playerContainer = document.getElementById('player-container');
+        const videoPlayer = document.getElementById('video-player');
+        
+        // Load Movies
+        async function loadMovies() {
+            try {
+                const res = await fetch(`${baseUrl}/movies`);
+                const data = await res.json();
+                loadingMoviesEl.classList.add('hidden');
+                
+                if (data.movies.length === 0) {
+                    movieListEl.innerHTML = '<p class="text-slate-400 text-sm text-center py-4">No movies found in D:/Movies</p>';
+                    return;
+                }
+
+                data.movies.forEach(movie => {
+                    const btn = document.createElement('button');
+                    btn.className = 'w-full text-left p-3 rounded-xl glass-hover transition-colors text-sm font-medium truncate border border-transparent focus:outline-none focus:border-brand-500';
+                    btn.title = movie;
+                    btn.textContent = movie;
+                    btn.onclick = () => selectMovie(movie, btn);
+                    movieListEl.appendChild(btn);
+                });
+            } catch (err) {
+                loadingMoviesEl.innerHTML = '<p class="text-red-400 text-sm">Failed to load movies.</p>';
+            }
+        }
+
+        // Format Duration
+        function formatDuration(seconds) {
+            if (!seconds) return 'Unknown duration';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            return `${h}h ${m}m`;
+        }
+
+        // Select Movie
+        async function selectMovie(filename, btnElement) {
+            // Highlight selected
+            Array.from(movieListEl.children).forEach(el => {
+                el.classList.remove('bg-brand-500/20', 'border-brand-500/50');
+            });
+            if (btnElement) {
+                btnElement.classList.add('bg-brand-500/20', 'border-brand-500/50');
+            }
+
+            selectedMovie = filename;
+            emptyStateEl.classList.add('hidden');
+            detailStateEl.classList.remove('hidden');
+            
+            // Reset state
+            document.getElementById('movie-title').textContent = 'Loading...';
+            document.getElementById('audio-list').innerHTML = '';
+            document.getElementById('sub-list').innerHTML = '';
+            hideProgress();
+            stopPlayer();
+            document.getElementById('btn-copy-m3u8').classList.add('hidden');
+            
+            // Stop existing polling
+            if (pollInterval) clearInterval(pollInterval);
+
+            try {
+                const res = await fetch(`${baseUrl}/movies/${encodeURIComponent(filename)}/info`);
+                const info = await res.json();
+                
+                document.getElementById('movie-title').textContent = filename;
+                document.getElementById('movie-duration').textContent = formatDuration(info.duration);
+                document.getElementById('movie-video-codec').textContent = (info.video[0] ? info.video[0].codec : 'Unknown') + ' (Video)';
+                
+                info.audio.forEach(a => {
+                    const li = document.createElement('li');
+                    li.textContent = `${a.title || a.language || 'Unknown'} (${a.codec})`;
+                    document.getElementById('audio-list').appendChild(li);
+                });
+
+                info.subtitle.forEach(s => {
+                    const li = document.createElement('li');
+                    li.textContent = `${s.title || s.language || 'Unknown'} (${s.codec})`;
+                    document.getElementById('sub-list').appendChild(li);
+                });
+
+                // Check status immediately
+                checkStatus();
+            } catch (err) {
+                document.getElementById('movie-title').textContent = 'Error loading info';
+            }
+        }
+
+        function showProgress(percent) {
+            document.getElementById('progress-container').classList.remove('hidden');
+            document.getElementById('progress-text').classList.remove('hidden');
+            document.getElementById('error-text').classList.add('hidden');
+            document.getElementById('progress-bar').style.width = `${percent}%`;
+            document.getElementById('progress-text').textContent = `${percent}%`;
+        }
+
+        function hideProgress() {
+            document.getElementById('progress-container').classList.add('hidden');
+            document.getElementById('progress-text').classList.add('hidden');
+            document.getElementById('progress-bar').style.width = `0%`;
+            document.getElementById('btn-transcode').disabled = false;
+            document.getElementById('btn-transcode').classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+
+        // Check Transcode Status
+        async function checkStatus() {
+            if (!selectedMovie) return;
+            try {
+                const res = await fetch(`${baseUrl}/movies/${encodeURIComponent(selectedMovie)}/transcode/status`);
+                const statusData = await res.json();
+
+                if (statusData.status === 'processing') {
+                    document.getElementById('btn-transcode').disabled = true;
+                    document.getElementById('btn-transcode').classList.add('opacity-50', 'cursor-not-allowed');
+                    showProgress(statusData.progress);
+                    
+                    // Poll
+                    if (!pollInterval) {
+                        pollInterval = setInterval(checkStatus, 3000);
+                    }
+                } else if (statusData.status === 'completed') {
+                    if (pollInterval) clearInterval(pollInterval);
+                    pollInterval = null;
+                    hideProgress();
+                    document.getElementById('progress-text').classList.remove('hidden');
+                    document.getElementById('progress-text').textContent = 'Completed!';
+                    document.getElementById('progress-text').classList.add('text-green-400');
+                    document.getElementById('btn-copy-m3u8').classList.remove('hidden');
+                    
+                    // Setup Player
+                    setupPlayer(selectedMovie);
+                } else if (statusData.status === 'error') {
+                    if (pollInterval) clearInterval(pollInterval);
+                    pollInterval = null;
+                    hideProgress();
+                    document.getElementById('error-text').classList.remove('hidden');
+                    document.getElementById('error-text').textContent = `Error: ${statusData.error}`;
+                } else {
+                    // Idle
+                    if (pollInterval) clearInterval(pollInterval);
+                    pollInterval = null;
+                }
+            } catch (err) {
+                console.error('Failed to check status', err);
+            }
+        }
+
+        // Transcode Button
+        document.getElementById('btn-transcode').addEventListener('click', async () => {
+            if (!selectedMovie) return;
+            try {
+                document.getElementById('btn-transcode').disabled = true;
+                const res = await fetch(`${baseUrl}/movies/${encodeURIComponent(selectedMovie)}/transcode`, {
+                    method: 'POST'
+                });
+                if (res.ok) {
+                    checkStatus();
+                } else {
+                    const err = await res.json();
+                    alert(`Failed to start: ${err.error}`);
+                    document.getElementById('btn-transcode').disabled = false;
+                }
+            } catch (err) {
+                alert('Request failed');
+                document.getElementById('btn-transcode').disabled = false;
+            }
+        });
+
+        // Copy M3U8 Button
+        document.getElementById('btn-copy-m3u8').addEventListener('click', () => {
+            if (!selectedMovie) return;
+            const m3u8Url = `${baseUrl}/stream/${encodeURIComponent(selectedMovie)}/master.m3u8`;
+            navigator.clipboard.writeText(m3u8Url).then(() => {
+                const btn = document.getElementById('btn-copy-m3u8');
+                const originalText = btn.innerHTML;
+                btn.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Copied!`;
+                btn.classList.add('text-green-400', 'border-green-400');
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.classList.remove('text-green-400', 'border-green-400');
+                }, 2000);
+            });
+        });
+
+        // Web Player Setup
+        function setupPlayer(filename) {
+            playerContainer.classList.remove('hidden');
+            const m3u8Url = `${baseUrl}/stream/${encodeURIComponent(filename)}/master.m3u8`;
+            
+            if (Hls.isSupported()) {
+                if (hls) {
+                    hls.destroy();
+                }
+                hls = new Hls({
+                    // Enable subtitles
+                    renderTextTracksNatively: false
+                });
+                hls.loadSource(m3u8Url);
+                hls.attachMedia(videoPlayer);
+                hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                    console.log('Manifest parsed. Available audio tracks:', hls.audioTracks);
+                    console.log('Available subtitle tracks:', hls.subtitleTracks);
+                });
+                hls.on(Hls.Events.ERROR, function (event, data) {
+                    if (data.fatal) {
+                        switch (data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                console.error("fatal network error encountered, try to recover");
+                                hls.startLoad();
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                console.error("fatal media error encountered, try to recover");
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                hls.destroy();
+                                break;
+                        }
+                    }
+                });
+            } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+                // Safari native HLS
+                videoPlayer.src = m3u8Url;
+            }
+        }
+
+        function stopPlayer() {
+            playerContainer.classList.add('hidden');
+            videoPlayer.pause();
+            if (hls) {
+                hls.destroy();
+                hls = null;
+            }
+        }
+
+        // Init
+        loadMovies();
+    </script>
+</body>
+</html>
