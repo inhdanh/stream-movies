@@ -46,11 +46,37 @@ async function extractSubtitle(filePath, subStream, subDir, lang) {
   });
 }
 
-function rewriteMasterPlaylist(masterPath, subStreamsInfo) {
+function rewriteMasterPlaylist(masterPath, subStreamsInfo, audioStreamsInfo) {
   if (!fs.existsSync(masterPath)) return;
   
   let content = fs.readFileSync(masterPath, 'utf8');
+  let lines = content.split('\n');
   
+  if (audioStreamsInfo) {
+    audioStreamsInfo.forEach((audio) => {
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes(`URI="${audio.uri}"`)) {
+          // Update NAME
+          lines[i] = lines[i].replace(/NAME="[^"]+"/, `NAME="${audio.name}"`);
+          // Update DEFAULT and AUTOSELECT
+          const isDefault = audio.isDefault ? 'YES' : 'NO';
+          if (lines[i].includes('DEFAULT=')) {
+            lines[i] = lines[i].replace(/DEFAULT=[^, \n]+/, `DEFAULT=${isDefault}`);
+          } else {
+            lines[i] = lines[i].replace('TYPE=AUDIO,', `TYPE=AUDIO,DEFAULT=${isDefault},`);
+          }
+          
+          if (lines[i].includes('AUTOSELECT=')) {
+            lines[i] = lines[i].replace(/AUTOSELECT=[^, \n]+/, `AUTOSELECT=${isDefault}`);
+          } else {
+            lines[i] = lines[i].replace('TYPE=AUDIO,', `TYPE=AUDIO,AUTOSELECT=${isDefault},`);
+          }
+        }
+      }
+    });
+  }
+  content = lines.join('\n');
+
   let subLines = '';
   subStreamsInfo.forEach((sub) => {
       subLines += `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",LANGUAGE="${sub.lang}",NAME="${sub.name}",AUTOSELECT=${sub.isDefault},DEFAULT=${sub.isDefault},URI="${sub.uri}"\n`;
@@ -70,9 +96,11 @@ function rewriteMasterPlaylist(masterPath, subStreamsInfo) {
         }
         newContent += '#EXT-X-STREAM-INF' + streamInf;
       }
-      fs.writeFileSync(masterPath, newContent);
+      content = newContent;
     }
   }
+  
+  fs.writeFileSync(masterPath, content);
 }
 
 async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
@@ -100,15 +128,15 @@ async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
   let sIndex = 0;
   info.subtitle.forEach((sub) => {
     if (isSubtitleTextBased(sub.codec)) {
-      let lang = sub.language || `sub${sIndex}`;
-      let name = sub.title || lang;
-      lang = lang.replace(/[^a-zA-Z0-9]/g, '');
-      let uniqueLang = `${lang}_${sIndex}`;
+      let lang = sub.languageCode || `sub${sIndex}`;
+      let name = sub.title || sub.language || lang;
+      let langSafe = lang.replace(/[^a-zA-Z0-9]/g, '');
+      let uniqueLang = `${langSafe}_${sIndex}`;
       const subDir = path.join(outputDir, 'subtitles', uniqueLang);
       
-      const isDefault = sIndex === 0 ? 'YES' : 'NO';
+      const isDefault = sub.isDefault ? 'YES' : (sIndex === 0 ? 'YES' : 'NO');
       subStreamsInfo.push({
-        lang,
+        lang: langSafe,
         name,
         isDefault,
         uri: `subtitles/${uniqueLang}/sub.m3u8`
@@ -147,11 +175,12 @@ async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
   }
 
   let aIndex = 0;
+  const audioStreamsInfo = [];
   info.audio.forEach((audio) => {
-    let lang = audio.language || `aud${aIndex}`;
-    let name = audio.title || lang;
-    lang = lang.replace(/[^a-zA-Z0-9]/g, '');
-    let uniqueLang = `${lang}_${aIndex}`;
+    let lang = audio.languageCode || `aud${aIndex}`;
+    let name = audio.title || audio.language || lang;
+    let langSafe = lang.replace(/[^a-zA-Z0-9]/g, '');
+    let uniqueLang = `${langSafe}_${aIndex}`;
     
     const audioDir = path.join(outputDir, 'audio', uniqueLang);
     if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true });
@@ -159,8 +188,9 @@ async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
     args.push('-map', `0:${audio.index}`);
     args.push(`-c:a:${aIndex}`, 'aac', `-b:a:${aIndex}`, '192k', '-ac', '2'); // Mixdown to stereo to ensure compatibility and sync
     
-    let isDefault = aIndex === 0 ? 'YES' : 'NO';
-    varStreamMap.push(`a:${aIndex},name:audio/${uniqueLang}/audio,agroup:audio,language:${lang},default:${isDefault}`);
+    let isDefault = audio.isDefault ? 'YES' : (aIndex === 0 && !info.audio.some(a => a.isDefault) ? 'YES' : 'NO');
+    varStreamMap.push(`a:${aIndex},name:audio/${uniqueLang}/audio,agroup:audio,language:${langSafe},default:${isDefault}`);
+    audioStreamsInfo.push({ index: aIndex, name: name, uri: `audio/${uniqueLang}/audio.m3u8`, isDefault: isDefault === 'YES' });
     aIndex++;
   });
 
@@ -201,7 +231,7 @@ async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
   ffmpegProc.on('close', async (code) => {
     if (code === 0) {
       await Promise.all(subPromises);
-      rewriteMasterPlaylist(path.join(outputDir, 'master.m3u8'), subStreamsInfo);
+      rewriteMasterPlaylist(path.join(outputDir, 'master.m3u8'), subStreamsInfo, audioStreamsInfo);
       console.log(`[Transcode] Finished: ${filename}`);
       transcodeJobs.set(filename, { id: jobId, status: 'completed', progress: 100 });
     } else {
