@@ -32,3 +32,5 @@ build/
 # Project specific
 logs/
 .hls/
+
+progress.json

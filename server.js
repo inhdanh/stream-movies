@@ -5,6 +5,7 @@ const fs = require('fs');
 
 const { scanMovies, getMediaInfo } = require('./src/media');
 const { transcodeToHls, getTranscodeStatus } = require('./src/transcoder');
+const { saveProgress, getProgress } = require('./src/storage');
 
 const app = express();
 const PORT = 3000;
@@ -74,6 +75,24 @@ app.get('/movies/:filename/transcode/status', (req, res) => {
   const filename = req.params.filename;
   const status = getTranscodeStatus(filename, HLS_OUTPUT_DIR);
   res.json(status);
+});
+
+// 5. Get playback progress
+app.get('/movies/:filename/progress', (req, res) => {
+  const filename = req.params.filename;
+  const progress = getProgress(filename);
+  res.json(progress);
+});
+
+// 6. Save playback progress
+app.post('/movies/:filename/progress', (req, res) => {
+  const filename = req.params.filename;
+  const { seconds, duration } = req.body;
+  if (typeof seconds !== 'number') {
+    return res.status(400).json({ error: 'Seconds must be a number' });
+  }
+  saveProgress(filename, seconds, duration);
+  res.json({ success: true });
 });
 
 // 5. Serve static HLS files

@@ -153,6 +153,8 @@
         let selectedMovie = null;
         let pollInterval = null;
         let hls = null;
+        let lastSavedTime = 0;
+        let syncInterval = null;
 
         // Elements
         const movieListEl = document.getElementById('movie-list');
@@ -375,10 +377,30 @@
                 });
                 hls.loadSource(m3u8Url);
                 hls.attachMedia(videoPlayer);
-                hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                hls.on(Hls.Events.MANIFEST_PARSED, async function () {
                     console.log('Manifest parsed. Available audio tracks:', hls.audioTracks);
                     console.log('Available subtitle tracks:', hls.subtitleTracks);
+                    
+                    // Load and resume progress
+                    const progress = await loadProgressFromServer(filename);
+                    if (progress && progress.seconds > 5) {
+                        console.log(`Resuming from ${progress.seconds}s`);
+                        videoPlayer.currentTime = progress.seconds;
+                    }
+                    videoPlayer.play();
                 });
+
+                // Periodic sync
+                if (syncInterval) clearInterval(syncInterval);
+                syncInterval = setInterval(() => {
+                    if (!videoPlayer.paused && videoPlayer.currentTime > 0) {
+                        // Only save if changed significantly (e.g. every 5 seconds)
+                        if (Math.abs(videoPlayer.currentTime - lastSavedTime) > 5) {
+                            saveProgressOnServer(filename, videoPlayer.currentTime, videoPlayer.duration);
+                            lastSavedTime = videoPlayer.currentTime;
+                        }
+                    }
+                }, 5000);
 
 
                 hls.on(Hls.Events.ERROR, function (event, data) {
@@ -412,6 +434,32 @@
             if (hls) {
                 hls.destroy();
                 hls = null;
+            }
+            if (syncInterval) {
+                clearInterval(syncInterval);
+                syncInterval = null;
+            }
+        }
+
+        async function loadProgressFromServer(filename) {
+            try {
+                const res = await fetch(`${baseUrl}/movies/${encodeURIComponent(filename)}/progress`);
+                return await res.json();
+            } catch (err) {
+                console.error('Failed to load progress', err);
+                return null;
+            }
+        }
+
+        async function saveProgressOnServer(filename, seconds, duration) {
+            try {
+                await fetch(`${baseUrl}/movies/${encodeURIComponent(filename)}/progress`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ seconds, duration })
+                });
+            } catch (err) {
+                console.error('Failed to save progress', err);
             }
         }
 
