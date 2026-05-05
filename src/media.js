@@ -81,7 +81,8 @@ async function getMediaInfo(filePath) {
           language: language,
           languageCode: langCode,
           title: tags.title || tags.TITLE || '',
-          isDefault: disposition.default === 1
+          isDefault: disposition.default === 1,
+          isForced: disposition.forced === 1
         };
 
         if (codecType === 'video') {
@@ -108,9 +109,15 @@ async function getMediaInfo(filePath) {
           }
           
           // Deduplicate: only add if we haven't seen this language and title combination
+          // However, prioritize tracks marked as default or forced
           const subKey = `${streamInfo.languageCode}_${streamInfo.title}`;
-          if (!info.subtitle.some(s => `${s.languageCode}_${s.title}` === subKey)) {
+          const existingIndex = info.subtitle.findIndex(s => `${s.languageCode}_${s.title}` === subKey);
+          
+          if (existingIndex === -1) {
             info.subtitle.push(streamInfo);
+          } else if (streamInfo.isDefault || streamInfo.isForced) {
+            // Replace existing if the new one is default or forced
+            info.subtitle[existingIndex] = streamInfo;
           }
         }
       });

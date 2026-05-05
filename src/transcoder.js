@@ -79,7 +79,7 @@ function rewriteMasterPlaylist(masterPath, subStreamsInfo, audioStreamsInfo) {
 
   let subLines = '';
   subStreamsInfo.forEach((sub) => {
-      subLines += `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",LANGUAGE="${sub.lang}",NAME="${sub.name}",AUTOSELECT=${sub.isDefault},DEFAULT=${sub.isDefault},URI="${sub.uri}"\n`;
+      subLines += `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",LANGUAGE="${sub.lang}",NAME="${sub.name}",AUTOSELECT=${sub.isDefault === 'YES' || sub.isForced === 'YES' ? 'YES' : 'NO'},DEFAULT=${sub.isDefault},FORCED=${sub.isForced},URI="${sub.uri}"\n`;
   });
 
   if (subLines) {
@@ -134,11 +134,17 @@ async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
       let uniqueLang = `${langSafe}_${sIndex}`;
       const subDir = path.join(outputDir, 'subtitles', uniqueLang);
       
-      const isDefault = sub.isDefault ? 'YES' : (sIndex === 0 ? 'YES' : 'NO');
+      // Subtitles should only be default if explicitly marked in the source
+      // or if it's the first one and NO others are marked as default.
+      // However, for subtitles, it's often better to respect the source's 'default' flag strictly.
+      const isDefault = sub.isDefault ? 'YES' : 'NO';
+      const isForced = sub.isForced ? 'YES' : 'NO';
+
       subStreamsInfo.push({
         lang: langSafe,
         name,
         isDefault,
+        isForced,
         uri: `subtitles/${uniqueLang}/sub.m3u8`
       });
 
