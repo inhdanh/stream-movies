@@ -104,7 +104,7 @@ function rewriteMasterPlaylist(masterPath, subStreamsInfo, audioStreamsInfo) {
 }
 
 async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
-  const filename = path.basename(filePath);
+  const filename = path.relative(moviesDir, filePath).replace(/\\/g, '/');
   
   if (transcodeJobs.has(filename)) {
     const job = transcodeJobs.get(filename);

@@ -171,36 +171,70 @@
                 const data = await res.json();
                 loadingMoviesEl.classList.add('hidden');
                 
-                if (data.movies.length === 0) {
+                if (!data.movies || data.movies.length === 0) {
                     movieListEl.innerHTML = '<p class="text-slate-400 text-sm text-center py-4">No movies found in D:/Movies</p>';
                     return;
                 }
 
-                data.movies.forEach(movieObj => {
-                    // Safety check: handle both old (string) and new (object) formats if necessary
-                    const movieName = typeof movieObj === 'string' ? movieObj : movieObj.name;
-                    const isReady = typeof movieObj === 'object' ? movieObj.isTranscoded : false;
-                    
-                    const btn = document.createElement('button');
-                    btn.className = 'w-full text-left p-3 rounded-xl glass-hover transition-colors text-sm font-medium flex justify-between items-center border border-transparent focus:outline-none focus:border-brand-500 group';
-                    btn.title = movieName;
-                    
-                    const nameSpan = document.createElement('span');
-                    nameSpan.className = 'truncate pr-2';
-                    nameSpan.textContent = movieName;
-                    
-                    btn.appendChild(nameSpan);
-                    
-                    if (isReady) {
-                        const badge = document.createElement('span');
-                        badge.className = 'bg-green-500/20 text-green-400 text-[10px] px-2 py-0.5 rounded-full border border-green-500/30 flex-shrink-0';
-                        badge.textContent = 'READY';
-                        btn.appendChild(badge);
+                movieListEl.innerHTML = '';
+
+                // Group movies by folder
+                const grouped = data.movies.reduce((acc, movie) => {
+                    // For old strings, fallback to Root
+                    if (typeof movie === 'string') {
+                        if (!acc['Root']) acc['Root'] = [];
+                        acc['Root'].push({ name: movie, path: movie, isTranscoded: false });
+                        return acc;
                     }
+                    const folder = movie.folder || 'Root';
+                    if (!acc[folder]) acc[folder] = [];
+                    acc[folder].push(movie);
+                    return acc;
+                }, {});
+
+                // Render folders
+                Object.keys(grouped).sort().forEach(folder => {
+                    const folderDiv = document.createElement('div');
+                    folderDiv.className = 'mb-6';
                     
-                    btn.onclick = () => selectMovie(movieName, btn);
-                    movieListEl.appendChild(btn);
+                    const header = document.createElement('h3');
+                    header.className = 'text-xs font-bold text-slate-500 mb-3 uppercase tracking-wider sticky top-0 bg-[#0f172a] py-2 z-10 border-b border-slate-800/50';
+                    header.textContent = folder === 'Root' ? 'Uncategorized' : folder;
+                    folderDiv.appendChild(header);
+
+                    const list = document.createElement('div');
+                    list.className = 'space-y-2';
+
+                    grouped[folder].forEach(movieObj => {
+                        const movieName = movieObj.name;
+                        const moviePath = movieObj.path;
+                        const isReady = movieObj.isTranscoded;
+                        
+                        const btn = document.createElement('button');
+                        btn.className = 'movie-item-btn w-full text-left p-3 rounded-xl glass-hover transition-colors text-sm font-medium flex justify-between items-center border border-transparent focus:outline-none focus:border-brand-500 group';
+                        btn.title = movieName;
+                        
+                        const nameSpan = document.createElement('span');
+                        nameSpan.className = 'truncate pr-2';
+                        nameSpan.textContent = movieName;
+                        
+                        btn.appendChild(nameSpan);
+                        
+                        if (isReady) {
+                            const badge = document.createElement('span');
+                            badge.className = 'bg-green-500/20 text-green-400 text-[10px] px-2 py-0.5 rounded-full border border-green-500/30 flex-shrink-0';
+                            badge.textContent = 'READY';
+                            btn.appendChild(badge);
+                        }
+                        
+                        btn.onclick = () => selectMovie(moviePath, btn);
+                        list.appendChild(btn);
+                    });
+
+                    folderDiv.appendChild(list);
+                    movieListEl.appendChild(folderDiv);
                 });
+
             } catch (err) {
                 loadingMoviesEl.innerHTML = '<p class="text-red-400 text-sm">Failed to load movies.</p>';
             }
@@ -217,7 +251,7 @@
         // Select Movie
         async function selectMovie(filename, btnElement) {
             // Highlight selected
-            Array.from(movieListEl.children).forEach(el => {
+            movieListEl.querySelectorAll('.movie-item-btn').forEach(el => {
                 el.classList.remove('bg-brand-500/20', 'border-brand-500/50');
             });
             if (btnElement) {
@@ -243,7 +277,7 @@
                 const res = await fetch(`${baseUrl}/movies/${encodeURIComponent(filename)}/info`);
                 const info = await res.json();
                 
-                document.getElementById('movie-title').textContent = filename;
+                document.getElementById('movie-title').textContent = filename.split('/').pop(); // Just show filename instead of full path
                 document.getElementById('movie-duration').textContent = formatDuration(info.duration);
                 document.getElementById('movie-video-codec').textContent = (info.video[0] ? info.video[0].codec : 'Unknown') + ' (Video)';
                 
@@ -387,7 +421,6 @@
                         console.log(`Resuming from ${progress.seconds}s`);
                         videoPlayer.currentTime = progress.seconds;
                     }
-                    videoPlayer.play();
                 });
 
                 // Periodic sync

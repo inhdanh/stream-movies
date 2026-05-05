@@ -22,9 +22,10 @@ const LANGUAGE_MAP = {
 /**
  * Scan directory for movies
  */
-async function scanMovies(dirPath, hlsOutputDir) {
+async function scanMovies(dirPath, hlsOutputDir, subDir = '') {
   return new Promise((resolve, reject) => {
-    fs.readdir(dirPath, { withFileTypes: true }, (err, files) => {
+    const currentPath = path.join(dirPath, subDir);
+    fs.readdir(currentPath, { withFileTypes: true }, async (err, files) => {
       if (err) {
         if (err.code === 'ENOENT') {
           return resolve([]); // Directory doesn't exist
@@ -32,18 +33,33 @@ async function scanMovies(dirPath, hlsOutputDir) {
         return reject(err);
       }
 
-      const movies = files
-        .filter(dirent => dirent.isFile() && VIDEO_EXTENSIONS.includes(path.extname(dirent.name).toLowerCase()))
-        .map(dirent => {
+      let movies = [];
+      for (const dirent of files) {
+        if (dirent.name.startsWith('.')) continue;
+
+        if (dirent.isDirectory()) {
+          try {
+            const subMovies = await scanMovies(dirPath, hlsOutputDir, path.join(subDir, dirent.name));
+            movies = movies.concat(subMovies);
+          } catch (e) {
+            console.error(`Error scanning subdirectory ${dirent.name}:`, e);
+          }
+        } else if (dirent.isFile() && VIDEO_EXTENSIONS.includes(path.extname(dirent.name).toLowerCase())) {
           const name = dirent.name;
+          const relPath = path.join(subDir, name).replace(/\\/g, '/');
           let isTranscoded = false;
           if (hlsOutputDir) {
-            const masterPath = path.join(hlsOutputDir, name, 'master.m3u8');
+            const masterPath = path.join(hlsOutputDir, relPath, 'master.m3u8');
             isTranscoded = fs.existsSync(masterPath);
           }
-          return { name, isTranscoded };
-        });
-      
+          movies.push({ 
+            name, 
+            path: relPath, 
+            folder: subDir.replace(/\\/g, '/'), 
+            isTranscoded 
+          });
+        }
+      }
       resolve(movies);
     });
   });
