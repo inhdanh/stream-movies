@@ -45,6 +45,33 @@
             background: rgba(51, 65, 85, 0.8);
             border-color: rgba(255, 255, 255, 0.2);
         }
+        /* Checkbox styling */
+        .custom-checkbox {
+            appearance: none;
+            width: 1.25rem;
+            height: 1.25rem;
+            border: 2px solid rgba(99, 102, 241, 0.5);
+            border-radius: 0.375rem;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        .custom-checkbox:checked {
+            background-color: #6366f1;
+            border-color: #6366f1;
+        }
+        .custom-checkbox:checked::after {
+            content: '';
+            position: absolute;
+            left: 6px;
+            top: 2px;
+            width: 5px;
+            height: 10px;
+            border: solid white;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg);
+        }
         /* Custom Scrollbar */
         ::-webkit-scrollbar {
             width: 8px;
@@ -121,15 +148,29 @@
 
                     <!-- Transcode Controls -->
                     <div id="transcode-controls" class="pt-4 border-t border-slate-700/50 flex flex-col gap-4">
-                        <div class="flex items-center justify-between">
-                            <button id="btn-transcode" class="bg-gradient-to-r from-brand-600 to-cyan-500 hover:from-brand-500 hover:to-cyan-400 text-white font-medium py-2.5 px-6 rounded-xl transition-all shadow-lg shadow-brand-500/30 flex items-center gap-2">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                Start Transcoding to HLS
-                            </button>
-                            <button id="btn-copy-m3u8" class="hidden bg-slate-700 hover:bg-slate-600 text-white font-medium py-2.5 px-6 rounded-xl transition-all border border-slate-600 flex items-center gap-2">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
-                                Copy M3U8 Link
-                            </button>
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="flex gap-2">
+                                <button id="btn-transcode" class="bg-gradient-to-r from-brand-600 to-cyan-500 hover:from-brand-500 hover:to-cyan-400 text-white font-medium py-2.5 px-6 rounded-xl transition-all shadow-lg shadow-brand-500/30 flex items-center gap-2">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                    Start Transcoding
+                                </button>
+                                <button id="btn-copy-m3u8" class="hidden bg-slate-700 hover:bg-slate-600 text-white font-medium py-2.5 px-6 rounded-xl transition-all border border-slate-600 flex items-center gap-2">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+                                    Copy Link
+                                </button>
+                            </div>
+                            
+                            <!-- Delete Dropdown -->
+                            <div class="relative group">
+                                <button id="btn-delete-menu" class="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 font-medium py-2.5 px-4 rounded-xl transition-all flex items-center gap-2">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                    Delete
+                                </button>
+                                <div class="absolute right-0 bottom-full mb-2 w-56 glass rounded-xl overflow-hidden hidden group-hover:block z-50 shadow-2xl">
+                                    <button onclick="deleteCurrentMovie(false)" class="w-full text-left px-4 py-3 hover:bg-slate-700/50 text-sm transition-colors border-b border-white/5">Delete HLS Only</button>
+                                    <button onclick="deleteCurrentMovie(true)" class="w-full text-left px-4 py-3 hover:bg-red-500/20 text-red-400 text-sm transition-colors">Delete Everything</button>
+                                </div>
+                            </div>
                         </div>
                         
                         <!-- Progress Bar -->
@@ -152,9 +193,29 @@
         </div>
     </div>
 
+    <!-- Bulk Action Bar -->
+    <div id="bulk-action-bar" class="fixed bottom-8 left-1/2 -translate-x-1/2 glass rounded-2xl p-4 shadow-2xl border border-brand-500/30 flex items-center gap-6 translate-y-32 transition-transform duration-300 z-50">
+        <div class="px-2 border-r border-slate-700 pr-6">
+            <span id="selected-count" class="text-brand-400 font-bold text-lg">0</span>
+            <span class="text-slate-400 text-sm ml-1">items selected</span>
+        </div>
+        <div class="flex gap-3">
+            <button onclick="bulkDelete(false)" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium py-2 px-5 rounded-xl transition-all text-sm border border-slate-700">
+                Delete HLS Only
+            </button>
+            <button onclick="bulkDelete(true)" class="bg-red-500 hover:bg-red-600 text-white font-medium py-2 px-5 rounded-xl transition-all text-sm shadow-lg shadow-red-500/20">
+                Delete Everything
+            </button>
+            <button onclick="clearSelection()" class="text-slate-400 hover:text-white px-3 transition-colors text-sm">
+                Cancel
+            </button>
+        </div>
+    </div>
+
     <script>
         const baseUrl = window.location.origin;
         let selectedMovie = null;
+        let selectedPaths = new Set();
         let pollInterval = null;
         let hls = null;
         let lastSavedTime = 0;
@@ -167,6 +228,8 @@
         const detailStateEl = document.getElementById('detail-state');
         const playerContainer = document.getElementById('player-container');
         const videoPlayer = document.getElementById('video-player');
+        const bulkActionBar = document.getElementById('bulk-action-bar');
+        const selectedCountEl = document.getElementById('selected-count');
         
         // Load Movies
         async function loadMovies() {
@@ -201,9 +264,31 @@
                     const folderDiv = document.createElement('div');
                     folderDiv.className = 'mb-6';
                     
-                    const header = document.createElement('h3');
-                    header.className = 'text-xs font-bold text-slate-500 mb-3 uppercase tracking-wider sticky top-0 bg-[#0f172a] py-2 z-10 border-b border-slate-800/50';
-                    header.textContent = folder === 'Root' ? 'Uncategorized' : folder;
+                    const header = document.createElement('div');
+                    header.className = 'flex items-center justify-between sticky top-0 bg-[#0f172a] py-2 z-10 border-b border-slate-800/50 mb-3';
+                    
+                    const headerTitle = document.createElement('h3');
+                    headerTitle.className = 'text-xs font-bold text-slate-500 uppercase tracking-wider';
+                    headerTitle.textContent = folder === 'Root' ? 'Uncategorized' : folder;
+                    
+                    const folderCheckContainer = document.createElement('div');
+                    folderCheckContainer.className = 'flex items-center gap-2 pr-2';
+                    
+                    const folderCheckbox = document.createElement('input');
+                    folderCheckbox.type = 'checkbox';
+                    folderCheckbox.className = 'custom-checkbox folder-checkbox';
+                    folderCheckbox.dataset.folder = folder;
+                    folderCheckbox.onclick = (e) => toggleFolderSelection(folder, e.target.checked);
+                    
+                    const folderLabel = document.createElement('span');
+                    folderLabel.className = 'text-[10px] text-slate-500 font-bold';
+                    folderLabel.textContent = 'ALL';
+                    
+                    folderCheckContainer.appendChild(folderLabel);
+                    folderCheckContainer.appendChild(folderCheckbox);
+                    
+                    header.appendChild(headerTitle);
+                    header.appendChild(folderCheckContainer);
                     folderDiv.appendChild(header);
 
                     const list = document.createElement('div');
@@ -214,8 +299,22 @@
                         const moviePath = movieObj.path;
                         const isReady = movieObj.isTranscoded;
                         
+                        const itemWrapper = document.createElement('div');
+                        itemWrapper.className = 'flex items-center gap-2 group';
+                        
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.className = 'custom-checkbox movie-checkbox';
+                        checkbox.dataset.path = moviePath;
+                        checkbox.dataset.folder = folder;
+                        checkbox.checked = selectedPaths.has(moviePath);
+                        checkbox.onclick = (e) => {
+                            e.stopPropagation();
+                            toggleSelection(moviePath, e.target.checked);
+                        };
+
                         const btn = document.createElement('button');
-                        btn.className = 'movie-item-btn w-full text-left p-3 rounded-xl glass-hover transition-colors text-sm font-medium flex justify-between items-center border border-transparent focus:outline-none focus:border-brand-500 group';
+                        btn.className = 'movie-item-btn flex-1 text-left p-3 rounded-xl glass-hover transition-colors text-sm font-medium flex justify-between items-center border border-transparent focus:outline-none focus:border-brand-500';
                         btn.dataset.path = moviePath;
                         btn.title = movieName;
                         
@@ -233,16 +332,131 @@
                         }
                         
                         btn.onclick = () => selectMovie(moviePath, btn);
-                        list.appendChild(btn);
+                        
+                        itemWrapper.appendChild(checkbox);
+                        itemWrapper.appendChild(btn);
+                        list.appendChild(itemWrapper);
                     });
 
                     folderDiv.appendChild(list);
                     movieListEl.appendChild(folderDiv);
                 });
+                
+                updateBulkBar();
 
             } catch (err) {
                 loadingMoviesEl.innerHTML = '<p class="text-red-400 text-sm">Failed to load movies.</p>';
             }
+        }
+
+        // Selection Logic
+        function toggleSelection(path, isChecked) {
+            if (isChecked) {
+                selectedPaths.add(path);
+            } else {
+                selectedPaths.delete(path);
+            }
+            updateBulkBar();
+        }
+
+        function toggleFolderSelection(folder, isChecked) {
+            const checkboxes = document.querySelectorAll(`.movie-checkbox[data-folder="${folder}"]`);
+            checkboxes.forEach(cb => {
+                cb.checked = isChecked;
+                if (isChecked) selectedPaths.add(cb.dataset.path);
+                else selectedPaths.delete(cb.dataset.path);
+            });
+            updateBulkBar();
+        }
+
+        function clearSelection() {
+            selectedPaths.clear();
+            document.querySelectorAll('.movie-checkbox, .folder-checkbox').forEach(cb => cb.checked = false);
+            updateBulkBar();
+        }
+
+        function updateBulkBar() {
+            const count = selectedPaths.size;
+            selectedCountEl.textContent = count;
+            if (count > 0) {
+                bulkActionBar.classList.remove('translate-y-32');
+            } else {
+                bulkActionBar.classList.add('translate-y-32');
+            }
+        }
+
+        async function bulkDelete(deleteOriginal) {
+            if (selectedPaths.size === 0) return;
+            
+            const message = deleteOriginal 
+                ? `Are you sure you want to delete ${selectedPaths.size} items AND their original files? This cannot be undone.`
+                : `Are you sure you want to delete HLS data for ${selectedPaths.size} items?`;
+                
+            if (!confirm(message)) return;
+
+            try {
+                const res = await fetch(`${baseUrl}/movies`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        paths: Array.from(selectedPaths),
+                        deleteOriginal
+                    })
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    alert(data.message);
+                    selectedPaths.clear();
+                    loadMovies();
+                    if (selectedMovie && Array.from(selectedPaths).includes(selectedMovie)) {
+                        resetDetailView();
+                    }
+                } else {
+                    const err = await res.json();
+                    alert(`Error: ${err.error}`);
+                }
+            } catch (err) {
+                alert('Request failed');
+            }
+        }
+
+        async function deleteCurrentMovie(deleteOriginal) {
+            if (!selectedMovie) return;
+            
+            const message = deleteOriginal 
+                ? `Are you sure you want to delete "${selectedMovie}" AND its original file?`
+                : `Are you sure you want to delete HLS data for "${selectedMovie}"?`;
+                
+            if (!confirm(message)) return;
+
+            try {
+                const res = await fetch(`${baseUrl}/movies`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        paths: [selectedMovie],
+                        deleteOriginal
+                    })
+                });
+
+                if (res.ok) {
+                    loadMovies();
+                    resetDetailView();
+                } else {
+                    const err = await res.json();
+                    alert(`Error: ${err.error}`);
+                }
+            } catch (err) {
+                alert('Request failed');
+            }
+        }
+
+        function resetDetailView() {
+            selectedMovie = null;
+            emptyStateEl.classList.remove('hidden');
+            detailStateEl.classList.add('hidden');
+            stopPlayer();
         }
 
         // Format Duration

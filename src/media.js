@@ -143,7 +143,40 @@ async function getMediaInfo(filePath) {
   });
 }
 
+/**
+ * Delete media files and associated HLS data
+ * @param {string} relPath Relative path of the movie
+ * @param {string} moviesDir Root movies directory
+ * @param {string} hlsOutputDir HLS output directory
+ * @param {object} options { deleteOriginal: boolean }
+ */
+async function deleteMedia(relPath, moviesDir, hlsOutputDir, options = {}) {
+  const { deleteOriginal = false } = options;
+  
+  // 1. Delete HLS data
+  const hlsPath = path.join(hlsOutputDir, relPath);
+  if (fs.existsSync(hlsPath)) {
+    console.log(`[Media] Deleting HLS data: ${hlsPath}`);
+    fs.rmSync(hlsPath, { recursive: true, force: true });
+  }
+
+  // 2. Delete original file
+  if (deleteOriginal) {
+    const originalPath = path.join(moviesDir, relPath);
+    if (fs.existsSync(originalPath)) {
+      console.log(`[Media] Deleting original file: ${originalPath}`);
+      const stats = fs.statSync(originalPath);
+      if (stats.isDirectory()) {
+        fs.rmSync(originalPath, { recursive: true, force: true });
+      } else {
+        fs.unlinkSync(originalPath);
+      }
+    }
+  }
+}
+
 module.exports = {
   scanMovies,
-  getMediaInfo
+  getMediaInfo,
+  deleteMedia
 };

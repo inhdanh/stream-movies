@@ -3,7 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 
-const { scanMovies, getMediaInfo } = require('./src/media');
+const { scanMovies, getMediaInfo, deleteMedia } = require('./src/media');
 const { transcodeToHls, getTranscodeStatus, transcodeEvents } = require('./src/transcoder');
 const { saveProgress, getProgress } = require('./src/storage');
 const AutoTranscoder = require('./src/autoTranscoder');
@@ -97,6 +97,27 @@ app.post('/movies/:filename/progress', (req, res) => {
   res.json({ success: true });
 });
 
+// 8. Delete movies (bulk)
+app.delete('/movies', async (req, res) => {
+  const { paths, deleteOriginal } = req.body;
+
+  if (!paths || !Array.isArray(paths)) {
+    return res.status(400).json({ error: 'Paths must be an array' });
+  }
+
+  try {
+    for (const relPath of paths) {
+      // Basic security check: prevent directory traversal
+      const normalizedPath = path.normalize(relPath).replace(/^(\.\.(\/|\\|$))+/, '');
+      await deleteMedia(normalizedPath, MOVIES_DIR, HLS_OUTPUT_DIR, { deleteOriginal });
+    }
+    res.json({ success: true, message: `Deleted ${paths.length} items` });
+  } catch (error) {
+    console.error('Error deleting movies:', error);
+    res.status(500).json({ error: 'Failed to delete movies', details: error.message });
+  }
+});
+
 // 7. Trigger auto-transcoding manually
 app.post('/movies/auto-transcode', async (req, res) => {
   try {
@@ -106,6 +127,8 @@ app.post('/movies/auto-transcode', async (req, res) => {
     res.status(500).json({ error: 'Failed to start auto-transcoding' });
   }
 });
+
+// 7. Trigger auto-transcoding manually
 
 // 5. Serve static HLS files
 // Example: /stream/movie.mkv/master.m3u8 -> serves D:/Movies/.hls/movie.mkv/master.m3u8
