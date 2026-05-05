@@ -68,6 +68,10 @@
             <h1 class="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-cyan-400 mb-2">StreamTV Admin</h1>
             <p class="text-slate-400 text-sm">HLS Transcoding & Streaming Dashboard</p>
         </div>
+        <button id="btn-auto-transcode" class="bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 font-medium py-2 px-6 rounded-xl transition-all flex items-center gap-2 group">
+            <svg class="w-5 h-5 group-hover:rotate-180 transition-transform duration-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            Auto Transcode All
+        </button>
     </div>
 
     <div class="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -212,6 +216,7 @@
                         
                         const btn = document.createElement('button');
                         btn.className = 'movie-item-btn w-full text-left p-3 rounded-xl glass-hover transition-colors text-sm font-medium flex justify-between items-center border border-transparent focus:outline-none focus:border-brand-500 group';
+                        btn.dataset.path = moviePath;
                         btn.title = movieName;
                         
                         const nameSpan = document.createElement('span');
@@ -222,7 +227,7 @@
                         
                         if (isReady) {
                             const badge = document.createElement('span');
-                            badge.className = 'bg-green-500/20 text-green-400 text-[10px] px-2 py-0.5 rounded-full border border-green-500/30 flex-shrink-0';
+                            badge.className = 'ready-badge bg-green-500/20 text-green-400 text-[10px] px-2 py-0.5 rounded-full border border-green-500/30 flex-shrink-0';
                             badge.textContent = 'READY';
                             btn.appendChild(badge);
                         }
@@ -495,6 +500,72 @@
                 console.error('Failed to save progress', err);
             }
         }
+
+        // Auto Transcode Button
+        document.getElementById('btn-auto-transcode').addEventListener('click', async () => {
+            const btn = document.getElementById('btn-auto-transcode');
+            const originalContent = btn.innerHTML;
+            
+            try {
+                btn.disabled = true;
+                btn.innerHTML = `<svg class="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Starting...`;
+                
+                const res = await fetch(`${baseUrl}/movies/auto-transcode`, {
+                    method: 'POST'
+                });
+                
+                if (res.ok) {
+                    btn.innerHTML = `<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Scanning Library...`;
+                    setTimeout(() => {
+                        btn.innerHTML = originalContent;
+                        btn.disabled = false;
+                        // Reload movies to show any new status
+                        loadMovies();
+                    }, 3000);
+                } else {
+                    alert('Failed to start auto-transcoding');
+                    btn.innerHTML = originalContent;
+                    btn.disabled = false;
+                }
+            } catch (err) {
+                alert('Request failed');
+                btn.innerHTML = originalContent;
+                btn.disabled = false;
+            }
+        });
+
+        // SSE Listener for real-time updates
+        const eventSource = new EventSource(`${baseUrl}/events`);
+        
+        eventSource.addEventListener('progress', (e) => {
+            const data = JSON.parse(e.data);
+            if (selectedMovie === data.filename) {
+                showProgress(data.progress);
+            }
+        });
+
+        eventSource.addEventListener('finished', (e) => {
+            const data = JSON.parse(e.data);
+            console.log('Transcode finished event:', data);
+            
+            // Update list item badge in the sidebar
+            const movieBtns = document.querySelectorAll(`.movie-item-btn`);
+            movieBtns.forEach(btn => {
+                if (btn.dataset.path === data.filename && data.status === 'completed') {
+                    // Check if already has READY badge
+                    if (!btn.querySelector('.ready-badge')) {
+                        const badge = document.createElement('span');
+                        badge.className = 'ready-badge bg-green-500/20 text-green-400 text-[10px] px-2 py-0.5 rounded-full border border-green-500/30 flex-shrink-0';
+                        badge.textContent = 'READY';
+                        btn.appendChild(badge);
+                    }
+                }
+            });
+
+            if (selectedMovie === data.filename) {
+                checkStatus(); // Handle UI update for selected movie (setup player, etc.)
+            }
+        });
 
         // Init
         loadMovies();

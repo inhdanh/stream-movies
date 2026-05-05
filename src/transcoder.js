@@ -3,6 +3,8 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const { getMediaInfo } = require('./media');
 
+const EventEmitter = require('events');
+const transcodeEvents = new EventEmitter();
 const transcodeJobs = new Map();
 
 function isVideoCompatible(codec) {
@@ -231,6 +233,7 @@ async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
       if (percent > 100) percent = 100;
       
       transcodeJobs.set(filename, { id: jobId, status: 'processing', progress: percent.toFixed(2) });
+      transcodeEvents.emit('progress', { filename, progress: percent.toFixed(2) });
     }
   });
 
@@ -240,9 +243,11 @@ async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
       rewriteMasterPlaylist(path.join(outputDir, 'master.m3u8'), subStreamsInfo, audioStreamsInfo);
       console.log(`[Transcode] Finished: ${filename}`);
       transcodeJobs.set(filename, { id: jobId, status: 'completed', progress: 100 });
+      transcodeEvents.emit('finished', { filename, status: 'completed' });
     } else {
       console.error(`[Transcode] Error for ${filename}: ffmpeg exited with code ${code}`);
       transcodeJobs.set(filename, { id: jobId, status: 'error', progress: 0, error: `Exited with code ${code}` });
+      transcodeEvents.emit('finished', { filename, status: 'error', error: `Exited with code ${code}` });
     }
   });
 
@@ -267,5 +272,6 @@ function getTranscodeStatus(filename, outputBaseDir) {
 
 module.exports = {
   transcodeToHls,
-  getTranscodeStatus
+  getTranscodeStatus,
+  transcodeEvents
 };

@@ -4,8 +4,9 @@ const path = require('path');
 const fs = require('fs');
 
 const { scanMovies, getMediaInfo } = require('./src/media');
-const { transcodeToHls, getTranscodeStatus } = require('./src/transcoder');
+const { transcodeToHls, getTranscodeStatus, transcodeEvents } = require('./src/transcoder');
 const { saveProgress, getProgress } = require('./src/storage');
+const AutoTranscoder = require('./src/autoTranscoder');
 
 const app = express();
 const PORT = 3000;
@@ -13,6 +14,8 @@ const PORT = 3000;
 // The base directory for movies and HLS output
 const MOVIES_DIR = 'D:/Movies';
 const HLS_OUTPUT_DIR = path.join(MOVIES_DIR, '.hls');
+
+const autoTranscoder = new AutoTranscoder(MOVIES_DIR, HLS_OUTPUT_DIR);
 
 // Ensure HLS output directory exists
 if (!fs.existsSync(HLS_OUTPUT_DIR)) {
@@ -91,8 +94,17 @@ app.post('/movies/:filename/progress', (req, res) => {
   if (typeof seconds !== 'number') {
     return res.status(400).json({ error: 'Seconds must be a number' });
   }
-  saveProgress(filename, seconds, duration);
   res.json({ success: true });
+});
+
+// 7. Trigger auto-transcoding manually
+app.post('/movies/auto-transcode', async (req, res) => {
+  try {
+    autoTranscoder.scan(); // Start a scan and process queue
+    res.json({ message: 'Auto-transcoding scan started' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to start auto-transcoding' });
+  }
 });
 
 // 5. Serve static HLS files
@@ -103,6 +115,30 @@ app.use('/stream', (req, res, next) => {
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   next();
 }, express.static(HLS_OUTPUT_DIR));
+ 
+ // SSE for real-time updates
+ app.get('/events', (req, res) => {
+   res.setHeader('Content-Type', 'text/event-stream');
+   res.setHeader('Cache-Control', 'no-cache');
+   res.setHeader('Connection', 'keep-alive');
+   res.flushHeaders();
+ 
+   const onProgress = (data) => {
+     res.write(`event: progress\ndata: ${JSON.stringify(data)}\n\n`);
+   };
+ 
+   const onFinished = (data) => {
+     res.write(`event: finished\ndata: ${JSON.stringify(data)}\n\n`);
+   };
+ 
+   transcodeEvents.on('progress', onProgress);
+   transcodeEvents.on('finished', onFinished);
+ 
+   req.on('close', () => {
+     transcodeEvents.off('progress', onProgress);
+     transcodeEvents.off('finished', onFinished);
+   });
+ });
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on port ${PORT}`);
