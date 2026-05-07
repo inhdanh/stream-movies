@@ -94,6 +94,7 @@ app.post('/movies/:filename/progress', (req, res) => {
   if (typeof seconds !== 'number') {
     return res.status(400).json({ error: 'Seconds must be a number' });
   }
+  saveProgress(filename, seconds, duration);
   res.json({ success: true });
 });
 
