@@ -3,7 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 
-const { scanMovies, getMediaInfo, deleteMedia } = require('./src/media');
+const { scanMovies, deleteMedia } = require('./src/media');
 const { transcodeToHls, getTranscodeStatus, transcodeEvents } = require('./src/transcoder');
 const { saveProgress, getProgress } = require('./src/storage');
 const AutoTranscoder = require('./src/autoTranscoder');
@@ -16,6 +16,17 @@ const MOVIES_DIR = 'D:/Movies';
 const HLS_OUTPUT_DIR = path.join(MOVIES_DIR, '.hls');
 
 const autoTranscoder = new AutoTranscoder(MOVIES_DIR, HLS_OUTPUT_DIR);
+
+function resolveMoviePath(filename) {
+  const filePath = path.resolve(MOVIES_DIR, filename);
+  const moviesRoot = path.resolve(MOVIES_DIR);
+
+  if (filePath !== moviesRoot && !filePath.startsWith(`${moviesRoot}${path.sep}`)) {
+    return null;
+  }
+
+  return filePath;
+}
 
 // Ensure HLS output directory exists
 if (!fs.existsSync(HLS_OUTPUT_DIR)) {
@@ -37,30 +48,12 @@ app.get('/movies', async (req, res) => {
   }
 });
 
-// 2. Get media info for a specific movie (Video, Audio, Subtitle streams)
-app.get('/movies/:filename/info', async (req, res) => {
-  const filename = req.params.filename;
-  const filePath = path.join(MOVIES_DIR, filename);
-
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: 'Movie not found' });
-  }
-
-  try {
-    const info = await getMediaInfo(filePath);
-    res.json(info);
-  } catch (error) {
-    console.error('Error getting media info:', error);
-    res.status(500).json({ error: 'Failed to get media info' });
-  }
-});
-
 // 3. Start transcoding a movie to HLS
 app.post('/movies/:filename/transcode', async (req, res) => {
   const filename = req.params.filename;
-  const filePath = path.join(MOVIES_DIR, filename);
+  const filePath = resolveMoviePath(filename);
   
-  if (!fs.existsSync(filePath)) {
+  if (!filePath || !fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'Movie not found' });
   }
 

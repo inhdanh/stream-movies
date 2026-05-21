@@ -129,22 +129,7 @@
                 </div>
 
                 <div id="detail-state" class="hidden">
-                    <h2 id="movie-title" class="text-2xl font-bold mb-2 truncate"></h2>
-                    <div class="flex items-center space-x-4 mb-6 text-sm text-slate-300">
-                        <span id="movie-duration" class="bg-slate-800 px-3 py-1 rounded-full border border-slate-700"></span>
-                        <span id="movie-video-codec" class="bg-slate-800 px-3 py-1 rounded-full border border-slate-700"></span>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-4 mb-6">
-                        <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
-                            <h3 class="text-xs uppercase tracking-wider text-slate-500 mb-2 font-semibold">Audio Tracks</h3>
-                            <ul id="audio-list" class="text-sm space-y-1 text-slate-300 list-disc list-inside"></ul>
-                        </div>
-                        <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
-                            <h3 class="text-xs uppercase tracking-wider text-slate-500 mb-2 font-semibold">Subtitle Tracks</h3>
-                            <ul id="sub-list" class="text-sm space-y-1 text-slate-300 list-disc list-inside"></ul>
-                        </div>
-                    </div>
+                    <h2 id="movie-title" class="text-2xl font-bold mb-6 truncate"></h2>
 
                     <!-- Transcode Controls -->
                     <div id="transcode-controls" class="pt-4 border-t border-slate-700/50 flex flex-col gap-4">
@@ -459,16 +444,8 @@
             stopPlayer();
         }
 
-        // Format Duration
-        function formatDuration(seconds) {
-            if (!seconds) return 'Unknown duration';
-            const h = Math.floor(seconds / 3600);
-            const m = Math.floor((seconds % 3600) / 60);
-            return `${h}h ${m}m`;
-        }
-
         // Select Movie
-        async function selectMovie(filename, btnElement) {
+        function selectMovie(filename, btnElement) {
             // Highlight selected
             movieListEl.querySelectorAll('.movie-item-btn').forEach(el => {
                 el.classList.remove('bg-brand-500/20', 'border-brand-500/50');
@@ -482,9 +459,7 @@
             detailStateEl.classList.remove('hidden');
             
             // Reset state
-            document.getElementById('movie-title').textContent = 'Loading...';
-            document.getElementById('audio-list').innerHTML = '';
-            document.getElementById('sub-list').innerHTML = '';
+            document.getElementById('movie-title').textContent = filename.split('/').pop();
             hideProgress();
             stopPlayer();
             document.getElementById('btn-copy-m3u8').classList.add('hidden');
@@ -492,31 +467,8 @@
             // Stop existing polling
             if (pollInterval) clearInterval(pollInterval);
 
-            try {
-                const res = await fetch(`${baseUrl}/movies/${encodeURIComponent(filename)}/info`);
-                const info = await res.json();
-                
-                document.getElementById('movie-title').textContent = filename.split('/').pop(); // Just show filename instead of full path
-                document.getElementById('movie-duration').textContent = formatDuration(info.duration);
-                document.getElementById('movie-video-codec').textContent = (info.video[0] ? info.video[0].codec : 'Unknown') + ' (Video)';
-                
-                info.audio.forEach(a => {
-                    const li = document.createElement('li');
-                    li.textContent = `${a.title || a.language || 'Unknown'} (${a.codec})`;
-                    document.getElementById('audio-list').appendChild(li);
-                });
-
-                info.subtitle.forEach(s => {
-                    const li = document.createElement('li');
-                    li.textContent = `${s.title || s.language || 'Unknown'} (${s.codec})`;
-                    document.getElementById('sub-list').appendChild(li);
-                });
-
-                // Check status immediately
-                checkStatus();
-            } catch (err) {
-                document.getElementById('movie-title').textContent = 'Error loading info';
-            }
+            // Check status immediately
+            checkStatus();
         }
 
         function showProgress(percent) {

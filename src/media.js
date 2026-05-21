@@ -4,6 +4,7 @@ const ffmpeg = require('fluent-ffmpeg');
 
 // Allowed video extensions
 const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.wmv'];
+const SAFE_FALLBACK_NAME = 'media';
 
 const LANGUAGE_MAP = {
   'vie': 'Vietnamese',
@@ -20,9 +21,117 @@ const LANGUAGE_MAP = {
 };
 
 /**
+ * Convert file/folder names into URL-friendly names.
+ * Keeps only ASCII letters and numbers, plus the file extension dot.
+ */
+function sanitizeName(name, fallback = SAFE_FALLBACK_NAME) {
+  const ext = path.extname(name);
+  const base = ext ? name.slice(0, -ext.length) : name;
+
+  const safeBase = base
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '')
+    .replace(/[^a-zA-Z0-9]/g, '');
+
+  const safeExt = ext
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9.]/g, '');
+
+  return `${safeBase || fallback}${safeExt}`;
+}
+
+function getUniqueSafeName(dirPath, originalName, usedNames) {
+  const desiredName = sanitizeName(originalName);
+  const ext = path.extname(desiredName);
+  const base = ext ? desiredName.slice(0, -ext.length) : desiredName;
+
+  let candidate = desiredName;
+  let suffix = 1;
+
+  while (
+    usedNames.has(candidate.toLowerCase()) &&
+    candidate.toLowerCase() !== originalName.toLowerCase()
+  ) {
+    candidate = `${base}${suffix}${ext}`;
+    suffix++;
+  }
+
+  while (
+    fs.existsSync(path.join(dirPath, candidate)) &&
+    candidate.toLowerCase() !== originalName.toLowerCase()
+  ) {
+    candidate = `${base}${suffix}${ext}`;
+    suffix++;
+  }
+
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function renameHlsPath(hlsOutputDir, oldRelPath, newRelPath) {
+  if (!hlsOutputDir) return;
+
+  const oldHlsPath = path.join(hlsOutputDir, oldRelPath);
+  const newHlsPath = path.join(hlsOutputDir, newRelPath);
+
+  if (!fs.existsSync(oldHlsPath) || oldHlsPath === newHlsPath) return;
+  if (fs.existsSync(newHlsPath)) {
+    console.warn(`[Media] Cannot rename HLS path because target exists: ${newHlsPath}`);
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(newHlsPath), { recursive: true });
+  fs.renameSync(oldHlsPath, newHlsPath);
+}
+
+/**
+ * Rename movie folders/files to URL-friendly names before scanning.
+ */
+async function normalizeMediaNames(dirPath, hlsOutputDir, subDir = '') {
+  const currentPath = path.join(dirPath, subDir);
+  if (!fs.existsSync(currentPath)) return;
+
+  const entries = fs.readdirSync(currentPath, { withFileTypes: true })
+    .filter(dirent => !dirent.name.startsWith('.'));
+  const usedNames = new Set(entries.map(dirent => dirent.name.toLowerCase()));
+  const normalizedDirs = [];
+
+  for (const dirent of entries) {
+    if (!dirent.isDirectory() && !dirent.isFile()) continue;
+
+    const oldName = dirent.name;
+    const newName = getUniqueSafeName(currentPath, oldName, usedNames);
+    const oldPath = path.join(currentPath, oldName);
+    const newPath = path.join(currentPath, newName);
+    const oldRelPath = path.join(subDir, oldName);
+    const newRelPath = path.join(subDir, newName);
+
+    if (oldName !== newName) {
+      fs.renameSync(oldPath, newPath);
+      renameHlsPath(hlsOutputDir, oldRelPath, newRelPath);
+      console.log(`[Media] Renamed "${oldRelPath}" -> "${newRelPath}"`);
+    }
+
+    if (dirent.isDirectory()) {
+      normalizedDirs.push(newRelPath);
+    }
+  }
+
+  for (const childDir of normalizedDirs) {
+    await normalizeMediaNames(dirPath, hlsOutputDir, childDir);
+  }
+}
+
+/**
  * Scan directory for movies
  */
-async function scanMovies(dirPath, hlsOutputDir, subDir = '') {
+async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
+  if (!subDir && options.normalizeNames !== false) {
+    await normalizeMediaNames(dirPath, hlsOutputDir);
+  }
+
   return new Promise((resolve, reject) => {
     const currentPath = path.join(dirPath, subDir);
     fs.readdir(currentPath, { withFileTypes: true }, async (err, files) => {
@@ -178,5 +287,7 @@ async function deleteMedia(relPath, moviesDir, hlsOutputDir, options = {}) {
 module.exports = {
   scanMovies,
   getMediaInfo,
-  deleteMedia
+  deleteMedia,
+  normalizeMediaNames,
+  sanitizeName
 };
