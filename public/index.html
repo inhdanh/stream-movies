@@ -142,6 +142,21 @@
                         <p id="cover-upload-status" class="text-xs text-slate-400"></p>
                     </div>
 
+                    <div id="metadata-editor" class="mb-6 grid grid-cols-1 md:grid-cols-[1fr_9rem_auto] gap-3 items-end">
+                        <label class="flex flex-col gap-1">
+                            <span id="metadata-title-label" class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Display title</span>
+                            <input id="metadata-title-input" class="bg-slate-950/70 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-brand-500" type="text" maxlength="160">
+                        </label>
+                        <label id="metadata-episode-field" class="hidden flex flex-col gap-1">
+                            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Episode start</span>
+                            <input id="metadata-episode-start-input" class="bg-slate-950/70 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-brand-500" type="number" min="1" step="1">
+                        </label>
+                        <button id="btn-save-metadata" class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 px-5 rounded-xl transition-all border border-indigo-400/30">
+                            Save
+                        </button>
+                        <p id="metadata-save-status" class="md:col-span-3 text-xs text-slate-400"></p>
+                    </div>
+
                     <!-- Transcode Controls -->
                     <div id="transcode-controls" class="pt-4 border-t border-slate-700/50 flex flex-col gap-4">
                         <div class="flex items-center justify-between gap-2">
@@ -357,6 +372,7 @@
 
                     grouped[folder].forEach(movieObj => {
                         const movieName = movieObj.name;
+                        const displayName = movieObj.displayName || movieObj.name;
                         const moviePath = movieObj.path;
                         const isReady = movieObj.isTranscoded;
                         
@@ -380,6 +396,12 @@
                         btn.dataset.folder = movieObj.folder || '';
                         btn.dataset.hasCover = movieObj.hasCover ? 'true' : 'false';
                         btn.dataset.coverBasePath = movieObj.coverBasePath || moviePath;
+                        btn.dataset.displayName = displayName;
+                        btn.dataset.metadataScope = movieObj.metadataScope || 'movie';
+                        btn.dataset.metadataKey = movieObj.metadataKey || moviePath;
+                        btn.dataset.metadataTitle = movieObj.title || displayName;
+                        btn.dataset.episodeStart = movieObj.episodeStart || '';
+                        btn.dataset.episodeNumber = movieObj.episodeNumber || '';
                         btn.title = movieName;
                         
                         if (movieObj.hasCover) {
@@ -392,8 +414,8 @@
                         }
 
                         const nameSpan = document.createElement('span');
-                        nameSpan.className = 'truncate pr-2 flex-1';
-                        nameSpan.textContent = movieName;
+                        nameSpan.className = 'movie-display-name truncate pr-2 flex-1';
+                        nameSpan.textContent = displayName;
                         
                         btn.appendChild(nameSpan);
                         
@@ -531,7 +553,21 @@
             detailStateEl.classList.add('hidden');
             document.getElementById('cover-preview').classList.add('hidden');
             document.getElementById('cover-upload-status').textContent = '';
+            document.getElementById('metadata-save-status').textContent = '';
             stopPlayer();
+        }
+
+        function populateMetadataEditor(btnElement) {
+            const titleInput = document.getElementById('metadata-title-input');
+            const episodeField = document.getElementById('metadata-episode-field');
+            const episodeInput = document.getElementById('metadata-episode-start-input');
+            const titleLabel = document.getElementById('metadata-title-label');
+
+            const isSeries = btnElement?.dataset.metadataScope === 'series';
+            titleLabel.textContent = isSeries ? 'Series title' : 'Display title';
+            titleInput.value = btnElement?.dataset.metadataTitle || btnElement?.dataset.displayName || '';
+            episodeInput.value = btnElement?.dataset.episodeStart || '1';
+            episodeField.classList.toggle('hidden', !isSeries);
         }
 
         function updateCoverPreview(filename, hasCover, coverBasePath = filename) {
@@ -629,6 +665,67 @@
             }
         }
 
+        async function saveMovieMetadata() {
+            if (!selectedMovie) return;
+
+            const selectedBtn = getSelectedMovieButton();
+            const titleInput = document.getElementById('metadata-title-input');
+            const episodeInput = document.getElementById('metadata-episode-start-input');
+            const saveBtn = document.getElementById('btn-save-metadata');
+            const statusEl = document.getElementById('metadata-save-status');
+            const title = titleInput.value.trim();
+            const isSeries = selectedBtn?.dataset.metadataScope === 'series';
+
+            if (!title) {
+                statusEl.textContent = 'Title is required.';
+                statusEl.className = 'md:col-span-3 text-xs text-red-400';
+                return;
+            }
+
+            const payload = { title };
+            if (isSeries) {
+                const episodeStart = Number.parseInt(episodeInput.value, 10);
+                if (!Number.isFinite(episodeStart) || episodeStart < 1) {
+                    statusEl.textContent = 'Episode start must be 1 or higher.';
+                    statusEl.className = 'md:col-span-3 text-xs text-red-400';
+                    return;
+                }
+                payload.episodeStart = episodeStart;
+            }
+
+            try {
+                saveBtn.disabled = true;
+                saveBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                statusEl.textContent = 'Saving...';
+                statusEl.className = 'md:col-span-3 text-xs text-slate-400';
+
+                const res = await fetch(`${baseUrl}/movies/${encodeURIComponent(selectedMovie)}/metadata`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json().catch(() => ({}));
+
+                if (!res.ok) {
+                    throw new Error(data.error || 'Failed to save metadata');
+                }
+
+                await loadMovies();
+                const refreshedBtn = getSelectedMovieButton();
+                if (refreshedBtn) {
+                    selectMovie(selectedMovie, refreshedBtn);
+                }
+                document.getElementById('metadata-save-status').textContent = 'Metadata saved.';
+                document.getElementById('metadata-save-status').className = 'md:col-span-3 text-xs text-green-400';
+            } catch (err) {
+                statusEl.textContent = err.message || 'Save failed.';
+                statusEl.className = 'md:col-span-3 text-xs text-red-400';
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
+
         // Select Movie
         function selectMovie(filename, btnElement) {
             // Highlight selected
@@ -644,8 +741,10 @@
             detailStateEl.classList.remove('hidden');
             
             // Reset state
-            document.getElementById('movie-title').textContent = filename.split('/').pop();
             document.getElementById('cover-upload-status').textContent = '';
+            document.getElementById('metadata-save-status').textContent = '';
+            document.getElementById('movie-title').textContent = btnElement?.dataset.displayName || filename.split('/').pop();
+            populateMetadataEditor(btnElement);
             updateCoverPreview(filename, btnElement?.dataset.hasCover === 'true', btnElement?.dataset.coverBasePath || filename);
             hideProgress();
             stopPlayer();
@@ -765,6 +864,8 @@
         document.getElementById('cover-upload-input').addEventListener('change', (event) => {
             uploadCoverImage(event.target.files[0]);
         });
+
+        document.getElementById('btn-save-metadata').addEventListener('click', saveMovieMetadata);
 
         // Web Player Setup
         function setupPlayer(filename) {

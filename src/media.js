@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
+const { loadMetadata, getMovieDisplayMetadata } = require('./metadata');
 
 // Allowed video extensions
 const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.wmv'];
@@ -132,6 +133,8 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
     await normalizeMediaNames(dirPath, hlsOutputDir);
   }
 
+  const metadata = options.metadata || loadMetadata();
+
   return new Promise((resolve, reject) => {
     const currentPath = path.join(dirPath, subDir);
     fs.readdir(currentPath, { withFileTypes: true }, async (err, files) => {
@@ -142,13 +145,23 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
         return reject(err);
       }
 
+      files.sort((a, b) => a.name.localeCompare(b.name, undefined, {
+        numeric: true,
+        sensitivity: 'base'
+      }));
+
       let movies = [];
+      let episodeIndex = 0;
       for (const dirent of files) {
         if (dirent.name.startsWith('.')) continue;
 
         if (dirent.isDirectory()) {
           try {
-            const subMovies = await scanMovies(dirPath, hlsOutputDir, path.join(subDir, dirent.name));
+            const subMovies = await scanMovies(dirPath, hlsOutputDir, path.join(subDir, dirent.name), {
+              ...options,
+              metadata,
+              normalizeNames: false
+            });
             movies = movies.concat(subMovies);
           } catch (e) {
             console.error(`Error scanning subdirectory ${dirent.name}:`, e);
@@ -174,13 +187,20 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
               hasCover = fs.existsSync(movieCoverPath);
             }
           }
-          movies.push({ 
+          const baseMovie = {
             name, 
             path: relPath, 
             folder: subDir.replace(/\\/g, '/'), 
             isTranscoded,
             hasCover,
             coverBasePath
+          };
+          const displayMetadata = getMovieDisplayMetadata(baseMovie, metadata, episodeIndex);
+          episodeIndex++;
+
+          movies.push({
+            ...baseMovie,
+            ...displayMetadata
           });
         }
       }

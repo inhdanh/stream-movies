@@ -7,6 +7,7 @@ const { spawn } = require('child_process');
 const { scanMovies, deleteMedia } = require('./src/media');
 const { transcodeToHls, getTranscodeStatus, transcodeEvents } = require('./src/transcoder');
 const { saveProgress, getProgress } = require('./src/storage');
+const { updateMovieMetadata } = require('./src/metadata');
 const AutoTranscoder = require('./src/autoTranscoder');
 
 const app = express();
@@ -147,6 +148,28 @@ app.get('/movies', async (req, res) => {
   } catch (error) {
     console.error('Error scanning movies:', error);
     res.status(500).json({ error: 'Failed to scan movies directory' });
+  }
+});
+
+// 2. Save display metadata. Movies inside a folder share series metadata.
+app.put('/movies/:filename/metadata', (req, res) => {
+  const filename = req.params.filename;
+  const filePath = resolveMoviePath(filename);
+
+  if (!filePath || !fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Movie not found' });
+  }
+
+  try {
+    const result = updateMovieMetadata(filename, req.body || {});
+    res.json({
+      success: true,
+      scope: result.scope,
+      key: result.key
+    });
+  } catch (error) {
+    console.error('Error saving movie metadata:', error);
+    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to save movie metadata' });
   }
 });
 
