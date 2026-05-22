@@ -16,11 +16,10 @@ function loadProgress() {
   }
 }
 
-function saveProgress(filename, seconds, duration) {
+function saveProgress(filename, seconds) {
   const progress = loadProgress();
   progress[filename] = {
     seconds,
-    duration: duration || 0,
     updatedAt: new Date().toISOString()
   };
   try {

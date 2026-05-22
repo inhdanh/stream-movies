@@ -87,6 +87,21 @@ function renameHlsPath(hlsOutputDir, oldRelPath, newRelPath) {
   fs.renameSync(oldHlsPath, newHlsPath);
 }
 
+async function getDurationSeconds(filePath) {
+  return new Promise((resolve) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) {
+        console.warn(`[Media] Failed to read duration for ${filePath}: ${err.message}`);
+        resolve(null);
+        return;
+      }
+
+      const duration = Number(metadata?.format?.duration);
+      resolve(Number.isFinite(duration) && duration >= 0 ? duration : null);
+    });
+  });
+}
+
 /**
  * Rename movie folders/files to URL-friendly names before scanning.
  */
@@ -169,6 +184,7 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
         } else if (dirent.isFile() && VIDEO_EXTENSIONS.includes(path.extname(dirent.name).toLowerCase())) {
           const name = dirent.name;
           const relPath = path.join(subDir, name).replace(/\\/g, '/');
+          const filePath = path.join(dirPath, subDir, name);
           let isTranscoded = false;
           let hasCover = false;
           let coverBasePath = relPath;
@@ -187,13 +203,15 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
               hasCover = fs.existsSync(movieCoverPath);
             }
           }
+          const durationSeconds = await getDurationSeconds(filePath);
           const baseMovie = {
             name, 
             path: relPath, 
             folder: subDir.replace(/\\/g, '/'), 
             isTranscoded,
             hasCover,
-            coverBasePath
+            coverBasePath,
+            durationSeconds
           };
           const displayMetadata = getMovieDisplayMetadata(baseMovie, metadata, episodeIndex);
           episodeIndex++;
