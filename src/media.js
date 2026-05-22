@@ -157,15 +157,19 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
           const name = dirent.name;
           const relPath = path.join(subDir, name).replace(/\\/g, '/');
           let isTranscoded = false;
+          let hasCover = false;
           if (hlsOutputDir) {
             const masterPath = path.join(hlsOutputDir, relPath, 'master.m3u8');
+            const coverPath = path.join(hlsOutputDir, relPath, 'cover.jpg');
             isTranscoded = fs.existsSync(masterPath);
+            hasCover = fs.existsSync(coverPath);
           }
           movies.push({ 
             name, 
             path: relPath, 
             folder: subDir.replace(/\\/g, '/'), 
-            isTranscoded 
+            isTranscoded,
+            hasCover
           });
         }
       }

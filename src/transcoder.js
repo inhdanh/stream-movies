@@ -10,6 +10,7 @@ const AUDIO_BITRATE = '192k';
 const AUDIO_GROUP_ID = 'audio';
 const SUBTITLE_GROUP_ID = 'subs';
 const PLAYLIST_VERSION = 3;
+const COVER_IMAGE_NAME = 'cover.jpg';
 const TEXT_SUBTITLE_CODECS = new Set(['subrip', 'ass', 'ssa', 'mov_text', 'srt', 'webvtt']);
 
 const transcodeEvents = new EventEmitter();
@@ -231,6 +232,34 @@ async function extractSubtitle(filePath, subtitle, durationSeconds) {
   }
 }
 
+async function extractCoverImage(filePath, outputDir, info, renditions) {
+  const durationSeconds = Number(info.duration || 0);
+  const seekSeconds = durationSeconds > 2
+    ? Math.min(Math.max(durationSeconds * 0.1, 5), durationSeconds - 1)
+    : 0;
+  const coverPath = path.join(outputDir, COVER_IMAGE_NAME);
+  const args = [
+    '-hide_banner',
+    '-y',
+    '-ss', seekSeconds.toFixed(3),
+    '-i', filePath,
+    '-map', `0:${renditions.video.inputIndex}`,
+    '-frames:v', '1',
+    '-q:v', '3',
+    '-vf', "scale='min(640,iw)':-2",
+    coverPath
+  ];
+
+  try {
+    await runFfmpeg(args);
+    return true;
+  } catch (error) {
+    console.error(`[Transcode] Cover image skipped: ${error.message}`);
+    fs.rmSync(coverPath, { force: true });
+    return false;
+  }
+}
+
 function writeSubtitlePlaylist(subtitle, durationSeconds) {
   const duration = Math.max(1, Math.ceil(durationSeconds || 1));
   const content = [
@@ -327,6 +356,7 @@ async function runTranscode(filename, filePath, outputDir, stagingDir, info, ren
   );
 
   renditions.subtitles = renditions.subtitles.filter((_, index) => extractedSubtitles[index]);
+  await extractCoverImage(filePath, stagingDir, info, renditions);
   writeMasterPlaylist(stagingDir, renditions);
   replaceOutputDirectory(stagingDir, outputDir);
 

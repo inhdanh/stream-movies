@@ -130,6 +130,9 @@
 
                 <div id="detail-state" class="hidden">
                     <h2 id="movie-title" class="text-2xl font-bold mb-6 truncate"></h2>
+                    <div id="cover-preview" class="hidden mb-6 overflow-hidden rounded-xl border border-white/10 bg-slate-950">
+                        <img id="cover-image" class="h-64 w-full object-cover" alt="">
+                    </div>
 
                     <!-- Transcode Controls -->
                     <div id="transcode-controls" class="pt-4 border-t border-slate-700/50 flex flex-col gap-4">
@@ -212,6 +215,10 @@
 
         function getM3u8Url(filename) {
             return `${baseUrl}/stream/${encodeStreamPath(filename)}/master.m3u8`;
+        }
+
+        function getCoverUrl(filename) {
+            return `${baseUrl}/stream/${encodeStreamPath(filename)}/cover.jpg`;
         }
 
         async function copyText(text) {
@@ -354,12 +361,22 @@
                         };
 
                         const btn = document.createElement('button');
-                        btn.className = 'movie-item-btn flex-1 text-left p-3 rounded-xl glass-hover transition-colors text-sm font-medium flex justify-between items-center border border-transparent focus:outline-none focus:border-brand-500';
+                        btn.className = 'movie-item-btn flex-1 text-left p-2 rounded-xl glass-hover transition-colors text-sm font-medium flex justify-between items-center border border-transparent focus:outline-none focus:border-brand-500';
                         btn.dataset.path = moviePath;
+                        btn.dataset.hasCover = movieObj.hasCover ? 'true' : 'false';
                         btn.title = movieName;
                         
+                        if (movieObj.hasCover) {
+                            const thumb = document.createElement('img');
+                            thumb.className = 'w-12 h-16 object-cover rounded-lg bg-slate-900 border border-white/10 flex-shrink-0 mr-3';
+                            thumb.src = getCoverUrl(moviePath);
+                            thumb.alt = '';
+                            thumb.loading = 'lazy';
+                            btn.appendChild(thumb);
+                        }
+
                         const nameSpan = document.createElement('span');
-                        nameSpan.className = 'truncate pr-2';
+                        nameSpan.className = 'truncate pr-2 flex-1';
                         nameSpan.textContent = movieName;
                         
                         btn.appendChild(nameSpan);
@@ -496,7 +513,36 @@
             selectedMovie = null;
             emptyStateEl.classList.remove('hidden');
             detailStateEl.classList.add('hidden');
+            document.getElementById('cover-preview').classList.add('hidden');
             stopPlayer();
+        }
+
+        function updateCoverPreview(filename, hasCover) {
+            const preview = document.getElementById('cover-preview');
+            const image = document.getElementById('cover-image');
+
+            if (!hasCover) {
+                image.removeAttribute('src');
+                preview.classList.add('hidden');
+                return;
+            }
+
+            image.src = `${getCoverUrl(filename)}?t=${Date.now()}`;
+            image.onerror = () => preview.classList.add('hidden');
+            image.onload = () => preview.classList.remove('hidden');
+        }
+
+        function ensureMovieButtonCover(btn, filename) {
+            if (btn.dataset.hasCover === 'true') return;
+
+            btn.dataset.hasCover = 'true';
+            const thumb = document.createElement('img');
+            thumb.className = 'w-12 h-16 object-cover rounded-lg bg-slate-900 border border-white/10 flex-shrink-0 mr-3';
+            thumb.src = `${getCoverUrl(filename)}?t=${Date.now()}`;
+            thumb.alt = '';
+            thumb.loading = 'lazy';
+            thumb.onerror = () => thumb.remove();
+            btn.insertBefore(thumb, btn.firstChild);
         }
 
         // Select Movie
@@ -515,6 +561,7 @@
             
             // Reset state
             document.getElementById('movie-title').textContent = filename.split('/').pop();
+            updateCoverPreview(filename, btnElement?.dataset.hasCover === 'true');
             hideProgress();
             stopPlayer();
             document.getElementById('btn-copy-m3u8').classList.add('hidden');
@@ -566,6 +613,7 @@
                     document.getElementById('progress-text').textContent = 'Completed!';
                     document.getElementById('progress-text').classList.add('text-green-400');
                     document.getElementById('btn-copy-m3u8').classList.remove('hidden');
+                    updateCoverPreview(selectedMovie, true);
                     
                     // Setup Player
                     setupPlayer(selectedMovie);
@@ -771,6 +819,8 @@
             const movieBtns = document.querySelectorAll(`.movie-item-btn`);
             movieBtns.forEach(btn => {
                 if (btn.dataset.path === data.filename && data.status === 'completed') {
+                    ensureMovieButtonCover(btn, data.filename);
+
                     // Check if already has READY badge
                     if (!btn.querySelector('.ready-badge')) {
                         const badge = document.createElement('span');
