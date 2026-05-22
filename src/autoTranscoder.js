@@ -1,7 +1,6 @@
-const fs = require('fs');
 const path = require('path');
 const { scanMovies } = require('./media');
-const { transcodeToHls, getTranscodeStatus } = require('./transcoder');
+const { transcodeToHls, waitForTranscode, getTranscodeStatus } = require('./transcoder');
 
 class AutoTranscoder {
   constructor(moviesDir, hlsOutputDir) {
@@ -53,39 +52,20 @@ class AutoTranscoder {
     console.log(`[AutoTranscoder] Starting auto-transcode for: ${moviePath}`);
     
     try {
-      // Start transcoding. transcodeToHls returns a jobId and runs in background.
-      // We need to wait for it to finish before processing the next one in the queue.
-      // However, transcodeToHls doesn't return a promise that resolves when finished.
-      // We need to poll for status or modify transcodeToHls.
-      
-      // For now, let's wait by polling status.
       await transcodeToHls(fullPath, this.moviesDir, this.hlsOutputDir);
-      
-      this.waitForCompletion(moviePath);
+      const status = await waitForTranscode(moviePath);
+
+      if (status.status === 'completed') {
+        console.log(`[AutoTranscoder] Completed: ${moviePath}`);
+      } else if (status.status === 'error') {
+        console.error(`[AutoTranscoder] Error transcoding ${moviePath}: ${status.error}`);
+      }
     } catch (error) {
       console.error(`[AutoTranscoder] Error starting transcode for ${moviePath}:`, error);
+    } finally {
       this.isProcessing = false;
       this.processQueue(); // Try next one
     }
-  }
-
-  waitForCompletion(moviePath) {
-    const checkInterval = setInterval(() => {
-      const status = getTranscodeStatus(moviePath, this.hlsOutputDir);
-      
-      if (status.status === 'completed') {
-        console.log(`[AutoTranscoder] Completed: ${moviePath}`);
-        clearInterval(checkInterval);
-        this.isProcessing = false;
-        this.processQueue();
-      } else if (status.status === 'error') {
-        console.error(`[AutoTranscoder] Error transcoding ${moviePath}: ${status.error}`);
-        clearInterval(checkInterval);
-        this.isProcessing = false;
-        this.processQueue();
-      }
-      // If still processing, just wait for next interval
-    }, 5000); // Check every 5 seconds
   }
 }
 

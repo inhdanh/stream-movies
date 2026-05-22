@@ -206,6 +206,61 @@
         let lastSavedTime = 0;
         let syncInterval = null;
 
+        function encodeStreamPath(filename) {
+            return filename.split('/').map(part => encodeURIComponent(part)).join('/');
+        }
+
+        function getM3u8Url(filename) {
+            return `${baseUrl}/stream/${encodeStreamPath(filename)}/master.m3u8`;
+        }
+
+        async function copyText(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+                return;
+            }
+
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'fixed';
+            textarea.style.top = '-9999px';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+
+            try {
+                const copied = document.execCommand('copy');
+                if (!copied) {
+                    throw new Error('Copy command failed');
+                }
+            } finally {
+                document.body.removeChild(textarea);
+            }
+        }
+
+        function showCopyButtonState(success) {
+            const btn = document.getElementById('btn-copy-m3u8');
+            const originalText = btn.dataset.originalHtml || btn.innerHTML;
+            btn.dataset.originalHtml = originalText;
+
+            if (success) {
+                btn.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Copied!`;
+                btn.classList.add('text-green-400', 'border-green-400');
+                btn.classList.remove('text-red-400', 'border-red-400');
+            } else {
+                btn.innerHTML = 'Copy failed';
+                btn.classList.add('text-red-400', 'border-red-400');
+                btn.classList.remove('text-green-400', 'border-green-400');
+            }
+
+            setTimeout(() => {
+                btn.innerHTML = originalText;
+                btn.classList.remove('text-green-400', 'border-green-400', 'text-red-400', 'border-red-400');
+            }, 2000);
+        }
+
         // Elements
         const movieListEl = document.getElementById('movie-list');
         const loadingMoviesEl = document.getElementById('loading-movies');
@@ -552,25 +607,23 @@
         });
 
         // Copy M3U8 Button
-        document.getElementById('btn-copy-m3u8').addEventListener('click', () => {
+        document.getElementById('btn-copy-m3u8').addEventListener('click', async () => {
             if (!selectedMovie) return;
-            const m3u8Url = `${baseUrl}/stream/${encodeURIComponent(selectedMovie)}/master.m3u8`;
-            navigator.clipboard.writeText(m3u8Url).then(() => {
-                const btn = document.getElementById('btn-copy-m3u8');
-                const originalText = btn.innerHTML;
-                btn.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> Copied!`;
-                btn.classList.add('text-green-400', 'border-green-400');
-                setTimeout(() => {
-                    btn.innerHTML = originalText;
-                    btn.classList.remove('text-green-400', 'border-green-400');
-                }, 2000);
-            });
+            const m3u8Url = getM3u8Url(selectedMovie);
+
+            try {
+                await copyText(m3u8Url);
+                showCopyButtonState(true);
+            } catch (err) {
+                console.error('Failed to copy link', err);
+                showCopyButtonState(false);
+            }
         });
 
         // Web Player Setup
         function setupPlayer(filename) {
             playerContainer.classList.remove('hidden');
-            const m3u8Url = `${baseUrl}/stream/${encodeURIComponent(filename)}/master.m3u8`;
+            const m3u8Url = getM3u8Url(filename);
             
             if (Hls.isSupported()) {
                 if (hls) {

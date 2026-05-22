@@ -1,265 +1,384 @@
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const EventEmitter = require('events');
 const { getMediaInfo } = require('./media');
 
-const EventEmitter = require('events');
+const HLS_SEGMENT_SECONDS = 6;
+const VIDEO_BITRATE = '3500k';
+const AUDIO_BITRATE = '192k';
+const AUDIO_GROUP_ID = 'audio';
+const SUBTITLE_GROUP_ID = 'subs';
+const PLAYLIST_VERSION = 3;
+const TEXT_SUBTITLE_CODECS = new Set(['subrip', 'ass', 'ssa', 'mov_text', 'srt', 'webvtt']);
+
 const transcodeEvents = new EventEmitter();
 const transcodeJobs = new Map();
 
-function isVideoCompatible(codec) {
-  return ['h264', 'hevc'].includes(codec);
+function ensureDir(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true });
 }
 
-function isSubtitleTextBased(codec) {
-  return ['subrip', 'ass', 'ssa', 'mov_text', 'srt', 'webvtt'].includes(codec);
+function toPosixPath(filePath) {
+  return filePath.replace(/\\/g, '/');
 }
 
-async function extractSubtitle(filePath, subStream, subDir, lang) {
+function cleanTagValue(value, fallback) {
+  const text = String(value || fallback || '').trim();
+  return text.replace(/["\r\n]/g, '');
+}
+
+function safeId(value, fallback) {
+  const id = String(value || fallback || '').replace(/[^a-zA-Z0-9]/g, '');
+  return id || fallback;
+}
+
+function isTextSubtitle(codec) {
+  return TEXT_SUBTITLE_CODECS.has(codec);
+}
+
+function parseFfmpegTime(text) {
+  const match = text.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+  if (!match) return null;
+
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  const seconds = Number.parseFloat(match[3]);
+  return (hours * 3600 + minutes * 60 + seconds) * 1000;
+}
+
+function createJob(filename) {
+  const job = {
+    id: Date.now().toString(),
+    status: 'processing',
+    progress: 0,
+    promise: null
+  };
+
+  transcodeJobs.set(filename, job);
+  transcodeEvents.emit('progress', { filename, progress: 0 });
+  return job;
+}
+
+function updateJob(filename, patch) {
+  const current = transcodeJobs.get(filename) || {};
+  const next = { ...current, ...patch };
+  transcodeJobs.set(filename, next);
+  return next;
+}
+
+function getDefaultAudioIndex(audioStreams) {
+  const explicitDefault = audioStreams.findIndex(audio => audio.isDefault);
+  return explicitDefault >= 0 ? explicitDefault : 0;
+}
+
+function buildRenditions(info, outputDir) {
+  const video = info.video[0];
+  if (!video) {
+    throw new Error('No video stream found');
+  }
+
+  const defaultAudioIndex = getDefaultAudioIndex(info.audio);
+  const height = video.height || 1080;
+  const width = video.width || 1920;
+  const videoName = `${height}p`;
+  const videoPlaylist = `video/${videoName}/${videoName}.m3u8`;
+  ensureDir(path.dirname(path.join(outputDir, videoPlaylist)));
+
+  const audio = info.audio.map((stream, index) => {
+    const language = safeId(stream.languageCode, `aud${index}`);
+    const id = `${language}_${index}`;
+    const playlist = `audio/${id}/audio.m3u8`;
+    ensureDir(path.dirname(path.join(outputDir, playlist)));
+
+    return {
+      inputIndex: stream.index,
+      outputIndex: index,
+      language,
+      name: cleanTagValue(stream.title || stream.language, language),
+      isDefault: index === defaultAudioIndex,
+      playlist
+    };
+  });
+
+  const subtitles = info.subtitle
+    .filter(stream => isTextSubtitle(stream.codec))
+    .map((stream, index) => {
+      const language = safeId(stream.languageCode, `sub${index}`);
+      const id = `${language}_${index}`;
+      const playlist = `subtitles/${id}/sub.m3u8`;
+      const fileName = 'sub.vtt';
+      const dir = path.join(outputDir, 'subtitles', id);
+      ensureDir(dir);
+
+      return {
+        inputIndex: stream.index,
+        language,
+        name: cleanTagValue(stream.title || stream.language, language),
+        isDefault: Boolean(stream.isDefault),
+        isForced: Boolean(stream.isForced),
+        playlist,
+        fileName,
+        filePath: path.join(dir, fileName)
+      };
+    });
+
+  return {
+    video: {
+      inputIndex: video.index,
+      width,
+      height,
+      name: videoName,
+      playlist: videoPlaylist
+    },
+    audio,
+    subtitles
+  };
+}
+
+function buildMediaArgs(filePath, outputDir, renditions) {
+  const args = [
+    '-hide_banner',
+    '-y',
+    '-fflags', '+genpts',
+    '-i', filePath,
+    '-map', `0:${renditions.video.inputIndex}`,
+    '-c:v:0', 'libx264',
+    '-preset', 'fast',
+    '-crf', '22',
+    '-maxrate:v:0', VIDEO_BITRATE,
+    '-bufsize:v:0', '7000k',
+    '-pix_fmt', 'yuv420p',
+    '-sc_threshold', '0',
+    '-force_key_frames', `expr:gte(t,n_forced*${HLS_SEGMENT_SECONDS})`,
+    '-map_metadata', '-1',
+    '-map_chapters', '-1',
+    '-max_muxing_queue_size', '9999'
+  ];
+
+  renditions.audio.forEach(audio => {
+    args.push(
+      '-map', `0:${audio.inputIndex}`,
+      `-c:a:${audio.outputIndex}`, 'aac',
+      `-b:a:${audio.outputIndex}`, AUDIO_BITRATE,
+      `-ac:a:${audio.outputIndex}`, '2'
+    );
+  });
+
+  const streamMap = [
+    `v:0,name:${renditions.video.playlist.replace(/\.m3u8$/, '')}`
+  ];
+
+  renditions.audio.forEach(audio => {
+    streamMap.push(`a:${audio.outputIndex},name:${audio.playlist.replace(/\.m3u8$/, '')}`);
+  });
+
+  args.push(
+    '-f', 'hls',
+    '-hls_time', String(HLS_SEGMENT_SECONDS),
+    '-hls_playlist_type', 'vod',
+    '-hls_flags', '+independent_segments',
+    '-hls_segment_type', 'mpegts',
+    '-var_stream_map', streamMap.join(' '),
+    '-hls_segment_filename', toPosixPath(path.join(outputDir, '%v_%03d.ts')),
+    toPosixPath(path.join(outputDir, '%v.m3u8'))
+  );
+
+  return args;
+}
+
+function runFfmpeg(args, onStderr) {
   return new Promise((resolve, reject) => {
-    if (!fs.existsSync(subDir)) {
-      fs.mkdirSync(subDir, { recursive: true });
-    }
-    const vttFile = `seg_001.vtt`;
-    const vttPath = path.join(subDir, vttFile);
-    const m3u8Path = path.join(subDir, `sub.m3u8`);
-    
-    const args = [
-      '-fflags', '+genpts',
-      '-i', filePath,
-      '-y',
-      '-map', `0:${subStream.index}`,
-      '-c:s', 'webvtt',
-      vttPath
-    ];
-
     const proc = spawn('ffmpeg', args);
-    proc.on('close', (code) => {
+    let stderr = '';
+
+    proc.stderr.on('data', data => {
+      const text = data.toString();
+      stderr += text;
+      onStderr?.(text);
+    });
+
+    proc.on('error', reject);
+    proc.on('close', code => {
       if (code === 0) {
-        const duration = 36000;
-        const m3u8Content = `#EXTM3U\n#EXT-X-TARGETDURATION:${duration}\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:${duration}.000,\n${vttFile}\n#EXT-X-ENDLIST\n`;
-        fs.writeFileSync(m3u8Path, m3u8Content);
         resolve();
-      } else {
-        console.error(`Error extracting subtitle ${lang}`);
-        resolve(); // continue anyway
+        return;
       }
+
+      const lastLines = stderr.trim().split(/\r?\n/).slice(-8).join('\n');
+      reject(new Error(`ffmpeg exited with code ${code}${lastLines ? `: ${lastLines}` : ''}`));
     });
   });
 }
 
-function rewriteMasterPlaylist(masterPath, subStreamsInfo, audioStreamsInfo) {
-  if (!fs.existsSync(masterPath)) return;
-  
-  let content = fs.readFileSync(masterPath, 'utf8');
-  let lines = content.split('\n');
-  
-  if (audioStreamsInfo) {
-    audioStreamsInfo.forEach((audio) => {
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes(`URI="${audio.uri}"`)) {
-          // Update NAME
-          lines[i] = lines[i].replace(/NAME="[^"]+"/, `NAME="${audio.name}"`);
-          // Update DEFAULT and AUTOSELECT
-          const isDefault = audio.isDefault ? 'YES' : 'NO';
-          if (lines[i].includes('DEFAULT=')) {
-            lines[i] = lines[i].replace(/DEFAULT=[^, \n]+/, `DEFAULT=${isDefault}`);
-          } else {
-            lines[i] = lines[i].replace('TYPE=AUDIO,', `TYPE=AUDIO,DEFAULT=${isDefault},`);
-          }
-          
-          if (lines[i].includes('AUTOSELECT=')) {
-            lines[i] = lines[i].replace(/AUTOSELECT=[^, \n]+/, `AUTOSELECT=${isDefault}`);
-          } else {
-            lines[i] = lines[i].replace('TYPE=AUDIO,', `TYPE=AUDIO,AUTOSELECT=${isDefault},`);
-          }
-        }
-      }
-    });
-  }
-  content = lines.join('\n');
+async function extractSubtitle(filePath, subtitle, durationSeconds) {
+  const args = [
+    '-hide_banner',
+    '-y',
+    '-i', filePath,
+    '-map', `0:${subtitle.inputIndex}`,
+    '-c:s', 'webvtt',
+    subtitle.filePath
+  ];
 
-  let subLines = '';
-  subStreamsInfo.forEach((sub) => {
-      subLines += `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",LANGUAGE="${sub.lang}",NAME="${sub.name}",AUTOSELECT=${sub.isDefault === 'YES' || sub.isForced === 'YES' ? 'YES' : 'NO'},DEFAULT=${sub.isDefault},FORCED=${sub.isForced},URI="${sub.uri}"\n`;
+  try {
+    await runFfmpeg(args);
+    writeSubtitlePlaylist(subtitle, durationSeconds);
+    return true;
+  } catch (error) {
+    console.error(`[Transcode] Subtitle ${subtitle.language} skipped: ${error.message}`);
+    return false;
+  }
+}
+
+function writeSubtitlePlaylist(subtitle, durationSeconds) {
+  const duration = Math.max(1, Math.ceil(durationSeconds || 1));
+  const content = [
+    '#EXTM3U',
+    `#EXT-X-VERSION:${PLAYLIST_VERSION}`,
+    `#EXT-X-TARGETDURATION:${duration}`,
+    '#EXT-X-MEDIA-SEQUENCE:0',
+    '#EXT-X-PLAYLIST-TYPE:VOD',
+    `#EXTINF:${duration.toFixed(3)},`,
+    subtitle.fileName,
+    '#EXT-X-ENDLIST',
+    ''
+  ].join('\n');
+
+  fs.writeFileSync(path.join(path.dirname(subtitle.filePath), 'sub.m3u8'), content);
+}
+
+function hlsBoolean(value) {
+  return value ? 'YES' : 'NO';
+}
+
+function estimateBandwidth(hasAudio) {
+  const videoBits = Number.parseInt(VIDEO_BITRATE, 10) * 1000;
+  const audioBits = Number.parseInt(AUDIO_BITRATE, 10) * 1000;
+  return videoBits + (hasAudio ? audioBits : 0);
+}
+
+function writeMasterPlaylist(outputDir, renditions) {
+  const hasAudio = renditions.audio.length > 0;
+  const bandwidth = estimateBandwidth(hasAudio);
+  const codecs = hasAudio ? 'avc1.640028,mp4a.40.2' : 'avc1.640028';
+  const attributes = [
+    `BANDWIDTH=${bandwidth}`,
+    `AVERAGE-BANDWIDTH=${bandwidth}`,
+    `RESOLUTION=${renditions.video.width}x${renditions.video.height}`,
+    `CODECS="${codecs}"`
+  ];
+
+  if (hasAudio) {
+    attributes.push(`AUDIO="${AUDIO_GROUP_ID}"`);
+  }
+
+  if (renditions.subtitles.length > 0) {
+    attributes.push(`SUBTITLES="${SUBTITLE_GROUP_ID}"`);
+  }
+
+  const lines = [
+    '#EXTM3U',
+    `#EXT-X-VERSION:${PLAYLIST_VERSION}`,
+    '#EXT-X-INDEPENDENT-SEGMENTS'
+  ];
+
+  renditions.audio.forEach(audio => {
+    lines.push(
+      `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="${AUDIO_GROUP_ID}",LANGUAGE="${audio.language}",NAME="${audio.name}",DEFAULT=${hlsBoolean(audio.isDefault)},AUTOSELECT=YES,URI="${audio.playlist}"`
+    );
   });
 
-  if (subLines) {
-    const parts = content.split('#EXT-X-STREAM-INF');
-    if (parts.length > 1) {
-      let newContent = parts[0] + subLines;
-      for (let i = 1; i < parts.length; i++) {
-        let streamInf = parts[i];
-        if (!streamInf.includes('SUBTITLES=')) {
-          let newlineIdx = streamInf.indexOf('\n');
-          if (newlineIdx !== -1) {
-             streamInf = streamInf.substring(0, newlineIdx) + ',SUBTITLES="subs"' + streamInf.substring(newlineIdx);
-          }
-        }
-        newContent += '#EXT-X-STREAM-INF' + streamInf;
-      }
-      content = newContent;
-    }
-  }
-  
-  fs.writeFileSync(masterPath, content);
+  renditions.subtitles.forEach(subtitle => {
+    lines.push(
+      `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="${SUBTITLE_GROUP_ID}",LANGUAGE="${subtitle.language}",NAME="${subtitle.name}",DEFAULT=${hlsBoolean(subtitle.isDefault)},AUTOSELECT=${hlsBoolean(subtitle.isDefault || subtitle.isForced)},FORCED=${hlsBoolean(subtitle.isForced)},URI="${subtitle.playlist}"`
+    );
+  });
+
+  lines.push(`#EXT-X-STREAM-INF:${attributes.join(',')}`);
+  lines.push(renditions.video.playlist);
+  lines.push('');
+
+  fs.writeFileSync(path.join(outputDir, 'master.m3u8'), lines.join('\n'));
+}
+
+function replaceOutputDirectory(stagingDir, outputDir) {
+  fs.rmSync(outputDir, { recursive: true, force: true });
+  fs.renameSync(stagingDir, outputDir);
+}
+
+async function runTranscode(filename, filePath, outputDir, stagingDir, info, renditions) {
+  const durationMs = Number(info.duration || 0) * 1000;
+  const mediaArgs = buildMediaArgs(filePath, stagingDir, renditions);
+
+  console.log(`[Transcode] ffmpeg ${mediaArgs.join(' ')}`);
+
+  await runFfmpeg(mediaArgs, text => {
+    const currentMs = parseFfmpegTime(text);
+    if (currentMs === null || durationMs <= 0) return;
+
+    const progress = Math.min(99, (currentMs / durationMs) * 100).toFixed(2);
+    updateJob(filename, { status: 'processing', progress });
+    transcodeEvents.emit('progress', { filename, progress });
+  });
+
+  const extractedSubtitles = await Promise.all(
+    renditions.subtitles.map(subtitle => extractSubtitle(filePath, subtitle, info.duration))
+  );
+
+  renditions.subtitles = renditions.subtitles.filter((_, index) => extractedSubtitles[index]);
+  writeMasterPlaylist(stagingDir, renditions);
+  replaceOutputDirectory(stagingDir, outputDir);
+
+  updateJob(filename, { status: 'completed', progress: 100 });
+  transcodeEvents.emit('progress', { filename, progress: 100 });
+  transcodeEvents.emit('finished', { filename, status: 'completed' });
+  console.log(`[Transcode] Finished: ${filename}`);
 }
 
 async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
   const filename = path.relative(moviesDir, filePath).replace(/\\/g, '/');
-  
-  if (transcodeJobs.has(filename)) {
-    const job = transcodeJobs.get(filename);
-    if (job.status === 'processing') {
-      return job.id;
-    }
-  }
+  const currentJob = transcodeJobs.get(filename);
 
-  const outputDir = path.join(outputBaseDir, filename);
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
+  if (currentJob?.status === 'processing') {
+    return currentJob.id;
   }
 
   const info = await getMediaInfo(filePath);
-  
-  const jobId = Date.now().toString();
-  transcodeJobs.set(filename, { id: jobId, status: 'processing', progress: 0 });
+  const outputDir = path.join(outputBaseDir, filename);
+  const stagingDir = `${outputDir}.tmp-${Date.now()}`;
+  ensureDir(stagingDir);
 
-  const subPromises = [];
-  const subStreamsInfo = [];
-  let sIndex = 0;
-  info.subtitle.forEach((sub) => {
-    if (isSubtitleTextBased(sub.codec)) {
-      let lang = sub.languageCode || `sub${sIndex}`;
-      let name = sub.title || sub.language || lang;
-      let langSafe = lang.replace(/[^a-zA-Z0-9]/g, '');
-      let uniqueLang = `${langSafe}_${sIndex}`;
-      const subDir = path.join(outputDir, 'subtitles', uniqueLang);
-      
-      // Subtitles should only be default if explicitly marked in the source
-      // or if it's the first one and NO others are marked as default.
-      // However, for subtitles, it's often better to respect the source's 'default' flag strictly.
-      const isDefault = sub.isDefault ? 'YES' : 'NO';
-      const isForced = sub.isForced ? 'YES' : 'NO';
+  const renditions = buildRenditions(info, stagingDir);
+  const job = createJob(filename);
 
-      subStreamsInfo.push({
-        lang: langSafe,
-        name,
-        isDefault,
-        isForced,
-        uri: `subtitles/${uniqueLang}/sub.m3u8`
-      });
+  job.promise = runTranscode(filename, filePath, outputDir, stagingDir, info, renditions)
+    .catch(error => {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+      updateJob(filename, { status: 'error', progress: 0, error: error.message });
+      transcodeEvents.emit('finished', { filename, status: 'error', error: error.message });
+      console.error(`[Transcode] Error for ${filename}: ${error.message}`);
+    });
 
-      subPromises.push(extractSubtitle(filePath, sub, subDir, lang));
-      sIndex++;
-    }
-  });
+  return job.id;
+}
 
-  const args = [
-    '-copyts',
-    '-fflags', '+genpts', 
-    '-i', filePath, 
-    '-y',
-    '-muxdelay', '0',
-    '-max_muxing_queue_size', '9999'
-  ];
-  let varStreamMap = [];
-
-  const videoStream = info.video[0];
-  if (videoStream) {
-    let height = videoStream.height || '1080';
-    let resName = `${height}p`;
-    
-    const videoDir = path.join(outputDir, 'video', resName);
-    if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir, { recursive: true });
-
-    args.push('-map', `0:${videoStream.index}`);
-    if (isVideoCompatible(videoStream.codec)) {
-      args.push('-c:v:0', 'copy');
-    } else {
-      args.push('-c:v:0', 'libx264', '-preset', 'fast', '-crf', '23');
-    }
-    varStreamMap.push(`v:0,name:video/${resName}/${resName},agroup:audio`);
+async function waitForTranscode(filename) {
+  const job = transcodeJobs.get(filename);
+  if (job?.promise) {
+    await job.promise;
   }
 
-  let aIndex = 0;
-  const audioStreamsInfo = [];
-  info.audio.forEach((audio) => {
-    let lang = audio.languageCode || `aud${aIndex}`;
-    let name = audio.title || audio.language || lang;
-    let langSafe = lang.replace(/[^a-zA-Z0-9]/g, '');
-    let uniqueLang = `${langSafe}_${aIndex}`;
-    
-    const audioDir = path.join(outputDir, 'audio', uniqueLang);
-    if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true });
-
-    args.push('-map', `0:${audio.index}`);
-    args.push(`-c:a:${aIndex}`, 'aac', `-b:a:${aIndex}`, '192k', '-ac', '2'); // Mixdown to stereo to ensure compatibility and sync
-    
-    let isDefault = audio.isDefault ? 'YES' : (aIndex === 0 && !info.audio.some(a => a.isDefault) ? 'YES' : 'NO');
-    varStreamMap.push(`a:${aIndex},name:audio/${uniqueLang}/audio,agroup:audio,language:${langSafe},default:${isDefault}`);
-    audioStreamsInfo.push({ index: aIndex, name: name, uri: `audio/${uniqueLang}/audio.m3u8`, isDefault: isDefault === 'YES' });
-    aIndex++;
-  });
-
-  if (varStreamMap.length > 0) {
-    args.push(
-      '-f', 'hls',
-      '-hls_time', '10',
-      '-hls_playlist_type', 'vod',
-      '-hls_flags', 'independent_segments',
-      '-master_pl_name', 'master.m3u8',
-      '-var_stream_map', varStreamMap.join(' '),
-      '-hls_segment_filename', path.join(outputDir, '%v_%03d.ts').replace(/\\/g, '/'),
-      path.join(outputDir, '%v.m3u8').replace(/\\/g, '/')
-    );
-  }
-
-  console.log('Spawning ffmpeg with args:', args.join(' '));
-
-  const ffmpegProc = spawn('ffmpeg', args);
-  let durationMs = info.duration * 1000;
-  
-  ffmpegProc.stderr.on('data', (data) => {
-    const text = data.toString();
-    const timeMatch = text.match(/time=(\d+):(\d+):(\d+\.\d+)/);
-    if (timeMatch && durationMs > 0) {
-      const hours = parseInt(timeMatch[1], 10);
-      const minutes = parseInt(timeMatch[2], 10);
-      const seconds = parseFloat(timeMatch[3]);
-      
-      const currentMs = (hours * 3600 + minutes * 60 + seconds) * 1000;
-      let percent = (currentMs / durationMs) * 100;
-      if (percent > 100) percent = 100;
-      
-      transcodeJobs.set(filename, { id: jobId, status: 'processing', progress: percent.toFixed(2) });
-      transcodeEvents.emit('progress', { filename, progress: percent.toFixed(2) });
-    }
-  });
-
-  ffmpegProc.on('close', async (code) => {
-    if (code === 0) {
-      await Promise.all(subPromises);
-      rewriteMasterPlaylist(path.join(outputDir, 'master.m3u8'), subStreamsInfo, audioStreamsInfo);
-      console.log(`[Transcode] Finished: ${filename}`);
-      transcodeJobs.set(filename, { id: jobId, status: 'completed', progress: 100 });
-      transcodeEvents.emit('finished', { filename, status: 'completed' });
-    } else {
-      console.error(`[Transcode] Error for ${filename}: ffmpeg exited with code ${code}`);
-      transcodeJobs.set(filename, { id: jobId, status: 'error', progress: 0, error: `Exited with code ${code}` });
-      transcodeEvents.emit('finished', { filename, status: 'error', error: `Exited with code ${code}` });
-    }
-  });
-
-  return jobId;
+  return getTranscodeStatus(filename);
 }
 
 function getTranscodeStatus(filename, outputBaseDir) {
-  if (transcodeJobs.has(filename)) {
-    return transcodeJobs.get(filename);
+  const job = transcodeJobs.get(filename);
+  if (job) {
+    const { promise, ...status } = job;
+    return status;
   }
 
-  // If not in active jobs, check if it already exists on disk
   if (outputBaseDir) {
     const masterPath = path.join(outputBaseDir, filename, 'master.m3u8');
     if (fs.existsSync(masterPath)) {
@@ -272,6 +391,7 @@ function getTranscodeStatus(filename, outputBaseDir) {
 
 module.exports = {
   transcodeToHls,
+  waitForTranscode,
   getTranscodeStatus,
   transcodeEvents
 };
