@@ -221,6 +221,7 @@ async function getMediaInfo(filePath) {
           }
           streamInfo.width = stream.width;
           streamInfo.height = stream.height;
+          streamInfo.frameRate = stream.avg_frame_rate || stream.r_frame_rate || '';
           info.video.push(streamInfo);
         } else if (codecType === 'audio') {
           streamInfo.channels = stream.channels;
