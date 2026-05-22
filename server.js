@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const { spawn } = require('child_process');
 
 const { scanMovies, deleteMedia } = require('./src/media');
 const { transcodeToHls, getTranscodeStatus, transcodeEvents } = require('./src/transcoder');
@@ -14,6 +15,13 @@ const PORT = 3000;
 // The base directory for movies and HLS output
 const MOVIES_DIR = 'D:/Movies';
 const HLS_OUTPUT_DIR = path.join(MOVIES_DIR, '.hls');
+const COVER_IMAGE_NAME = 'cover.jpg';
+const COVER_UPLOAD_LIMIT = '10mb';
+const COVER_UPLOAD_TYPES = new Map([
+  ['image/jpeg', '.jpg'],
+  ['image/png', '.png'],
+  ['image/webp', '.webp']
+]);
 
 const autoTranscoder = new AutoTranscoder(MOVIES_DIR, HLS_OUTPUT_DIR);
 
@@ -26,6 +34,100 @@ function resolveMoviePath(filename) {
   }
 
   return filePath;
+}
+
+function resolveHlsPath(filename) {
+  const hlsPath = path.resolve(HLS_OUTPUT_DIR, filename);
+  const hlsRoot = path.resolve(HLS_OUTPUT_DIR);
+
+  if (hlsPath !== hlsRoot && !hlsPath.startsWith(`${hlsRoot}${path.sep}`)) {
+    return null;
+  }
+
+  return hlsPath;
+}
+
+function getCoverBasePath(filename) {
+  const folder = path.dirname(filename).replace(/\\/g, '/');
+  return folder && folder !== '.' ? folder : filename;
+}
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('ffmpeg', args);
+    let stderr = '';
+
+    proc.stderr.on('data', data => {
+      stderr += data.toString();
+    });
+
+    proc.on('error', reject);
+    proc.on('close', code => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      const lastLines = stderr.trim().split(/\r?\n/).slice(-8).join('\n');
+      reject(new Error(`ffmpeg exited with code ${code}${lastLines ? `: ${lastLines}` : ''}`));
+    });
+  });
+}
+
+async function saveCoverImage(filename, imageBuffer, mimeType) {
+  const filePath = resolveMoviePath(filename);
+  if (!filePath || !fs.existsSync(filePath)) {
+    const error = new Error('Movie not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const ext = COVER_UPLOAD_TYPES.get(mimeType);
+  if (!ext) {
+    const error = new Error('Cover must be a JPEG, PNG, or WebP image');
+    error.statusCode = 415;
+    throw error;
+  }
+
+  if (!Buffer.isBuffer(imageBuffer) || imageBuffer.length === 0) {
+    const error = new Error('Cover image is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const coverBasePath = getCoverBasePath(filename);
+  const outputDir = resolveHlsPath(coverBasePath);
+  if (!outputDir) {
+    const error = new Error('Invalid movie path');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  const uploadId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const tempInput = path.join(outputDir, `.cover-upload-${uploadId}${ext}`);
+  const tempOutput = path.join(outputDir, `.cover-upload-${uploadId}.jpg`);
+  const coverPath = path.join(outputDir, COVER_IMAGE_NAME);
+
+  try {
+    fs.writeFileSync(tempInput, imageBuffer);
+    await runFfmpeg([
+      '-hide_banner',
+      '-y',
+      '-i', tempInput,
+      '-frames:v', '1',
+      '-vf', "scale='min(960,iw)':-2",
+      '-q:v', '2',
+      tempOutput
+    ]);
+    fs.renameSync(tempOutput, coverPath);
+  } finally {
+    fs.rmSync(tempInput, { force: true });
+    fs.rmSync(tempOutput, { force: true });
+  }
+
+  return coverBasePath;
 }
 
 // Ensure HLS output directory exists
@@ -65,6 +167,27 @@ app.post('/movies/:filename/transcode', async (req, res) => {
     res.status(500).json({ error: 'Failed to start transcoding', details: error.message });
   }
 });
+
+// 3b. Upload/replace movie cover image
+app.post(
+  '/movies/:filename/cover',
+  express.raw({ type: Array.from(COVER_UPLOAD_TYPES.keys()), limit: COVER_UPLOAD_LIMIT }),
+  async (req, res) => {
+    const filename = req.params.filename;
+
+    try {
+      const coverBasePath = await saveCoverImage(filename, req.body, req.get('content-type'));
+      res.json({
+        success: true,
+        coverBasePath,
+        coverUrl: `/stream/${coverBasePath.split('/').map(encodeURIComponent).join('/')}/${COVER_IMAGE_NAME}`
+      });
+    } catch (error) {
+      console.error('Error uploading cover:', error);
+      res.status(error.statusCode || 500).json({ error: error.message || 'Failed to upload cover image' });
+    }
+  }
+);
 
 // 4. Get transcode status
 app.get('/movies/:filename/transcode/status', (req, res) => {

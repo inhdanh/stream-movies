@@ -434,6 +434,20 @@ async function extractCoverImage(filePath, outputDir, info, renditions) {
   }
 }
 
+function preserveExistingCoverImage(outputDir, stagingDir) {
+  const seriesCoverPath = path.join(path.dirname(outputDir), COVER_IMAGE_NAME);
+  if (path.basename(path.dirname(outputDir)) !== '.hls' && fs.existsSync(seriesCoverPath)) {
+    fs.copyFileSync(seriesCoverPath, path.join(stagingDir, COVER_IMAGE_NAME));
+    return true;
+  }
+
+  const existingCoverPath = path.join(outputDir, COVER_IMAGE_NAME);
+  if (!fs.existsSync(existingCoverPath)) return false;
+
+  fs.copyFileSync(existingCoverPath, path.join(stagingDir, COVER_IMAGE_NAME));
+  return true;
+}
+
 function writeSubtitlePlaylist(subtitle, durationSeconds) {
   const duration = Math.max(1, Math.ceil(durationSeconds || 1));
   const content = [
@@ -750,6 +764,7 @@ async function runTranscode(filename, filePath, outputDir, stagingDir, info, ren
 
   renditions.subtitles = renditions.subtitles.filter((_, index) => extractedSubtitles[index]);
   await extractCoverImage(filePath, stagingDir, info, renditions);
+  preserveExistingCoverImage(outputDir, stagingDir);
   writeMasterPlaylist(stagingDir, renditions);
   validateOutput(stagingDir, renditions);
   try {

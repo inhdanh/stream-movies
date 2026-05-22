@@ -158,18 +158,29 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
           const relPath = path.join(subDir, name).replace(/\\/g, '/');
           let isTranscoded = false;
           let hasCover = false;
+          let coverBasePath = relPath;
           if (hlsOutputDir) {
             const masterPath = path.join(hlsOutputDir, relPath, 'master.m3u8');
-            const coverPath = path.join(hlsOutputDir, relPath, 'cover.jpg');
+            const seriesCoverBasePath = subDir.replace(/\\/g, '/');
+            const seriesCoverPath = seriesCoverBasePath
+              ? path.join(hlsOutputDir, seriesCoverBasePath, 'cover.jpg')
+              : null;
+            const movieCoverPath = path.join(hlsOutputDir, relPath, 'cover.jpg');
             isTranscoded = fs.existsSync(masterPath);
-            hasCover = fs.existsSync(coverPath);
+            if (seriesCoverPath && fs.existsSync(seriesCoverPath)) {
+              hasCover = true;
+              coverBasePath = seriesCoverBasePath;
+            } else {
+              hasCover = fs.existsSync(movieCoverPath);
+            }
           }
           movies.push({ 
             name, 
             path: relPath, 
             folder: subDir.replace(/\\/g, '/'), 
             isTranscoded,
-            hasCover
+            hasCover,
+            coverBasePath
           });
         }
       }

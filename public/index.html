@@ -133,6 +133,14 @@
                     <div id="cover-preview" class="hidden mb-6 overflow-hidden rounded-xl border border-white/10 bg-slate-950">
                         <img id="cover-image" class="h-64 w-full object-cover" alt="">
                     </div>
+                    <div class="mb-6 flex flex-wrap items-center gap-3">
+                        <input id="cover-upload-input" class="hidden" type="file" accept="image/jpeg,image/png,image/webp">
+                        <button id="btn-upload-cover" class="bg-slate-700 hover:bg-slate-600 text-white font-medium py-2.5 px-5 rounded-xl transition-all border border-slate-600 flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 4v12m0-12l-4 4m4-4l4 4"></path></svg>
+                            Upload Cover
+                        </button>
+                        <p id="cover-upload-status" class="text-xs text-slate-400"></p>
+                    </div>
 
                     <!-- Transcode Controls -->
                     <div id="transcode-controls" class="pt-4 border-t border-slate-700/50 flex flex-col gap-4">
@@ -217,8 +225,14 @@
             return `${baseUrl}/stream/${encodeStreamPath(filename)}/master.m3u8`;
         }
 
-        function getCoverUrl(filename) {
-            return `${baseUrl}/stream/${encodeStreamPath(filename)}/cover.jpg`;
+        function getCoverUrl(coverBasePath) {
+            return `${baseUrl}/stream/${encodeStreamPath(coverBasePath)}/cover.jpg`;
+        }
+
+        function getSelectedMovieButton(filename = selectedMovie) {
+            if (!filename) return null;
+            return Array.from(document.querySelectorAll('.movie-item-btn'))
+                .find(btn => btn.dataset.path === filename) || null;
         }
 
         async function copyText(text) {
@@ -363,13 +377,15 @@
                         const btn = document.createElement('button');
                         btn.className = 'movie-item-btn flex-1 text-left p-2 rounded-xl glass-hover transition-colors text-sm font-medium flex justify-between items-center border border-transparent focus:outline-none focus:border-brand-500';
                         btn.dataset.path = moviePath;
+                        btn.dataset.folder = movieObj.folder || '';
                         btn.dataset.hasCover = movieObj.hasCover ? 'true' : 'false';
+                        btn.dataset.coverBasePath = movieObj.coverBasePath || moviePath;
                         btn.title = movieName;
                         
                         if (movieObj.hasCover) {
                             const thumb = document.createElement('img');
                             thumb.className = 'w-12 h-16 object-cover rounded-lg bg-slate-900 border border-white/10 flex-shrink-0 mr-3';
-                            thumb.src = getCoverUrl(moviePath);
+                            thumb.src = getCoverUrl(btn.dataset.coverBasePath);
                             thumb.alt = '';
                             thumb.loading = 'lazy';
                             btn.appendChild(thumb);
@@ -514,10 +530,11 @@
             emptyStateEl.classList.remove('hidden');
             detailStateEl.classList.add('hidden');
             document.getElementById('cover-preview').classList.add('hidden');
+            document.getElementById('cover-upload-status').textContent = '';
             stopPlayer();
         }
 
-        function updateCoverPreview(filename, hasCover) {
+        function updateCoverPreview(filename, hasCover, coverBasePath = filename) {
             const preview = document.getElementById('cover-preview');
             const image = document.getElementById('cover-image');
 
@@ -527,22 +544,89 @@
                 return;
             }
 
-            image.src = `${getCoverUrl(filename)}?t=${Date.now()}`;
+            image.src = `${getCoverUrl(coverBasePath)}?t=${Date.now()}`;
             image.onerror = () => preview.classList.add('hidden');
             image.onload = () => preview.classList.remove('hidden');
         }
 
-        function ensureMovieButtonCover(btn, filename) {
-            if (btn.dataset.hasCover === 'true') return;
+        function ensureMovieButtonCover(btn, coverBasePath) {
+            if (!btn) return;
 
             btn.dataset.hasCover = 'true';
-            const thumb = document.createElement('img');
-            thumb.className = 'w-12 h-16 object-cover rounded-lg bg-slate-900 border border-white/10 flex-shrink-0 mr-3';
-            thumb.src = `${getCoverUrl(filename)}?t=${Date.now()}`;
-            thumb.alt = '';
-            thumb.loading = 'lazy';
-            thumb.onerror = () => thumb.remove();
-            btn.insertBefore(thumb, btn.firstChild);
+            btn.dataset.coverBasePath = coverBasePath;
+            let thumb = btn.querySelector('img');
+            if (!thumb) {
+                thumb = document.createElement('img');
+                thumb.className = 'w-12 h-16 object-cover rounded-lg bg-slate-900 border border-white/10 flex-shrink-0 mr-3';
+                thumb.alt = '';
+                thumb.loading = 'lazy';
+                thumb.onerror = () => thumb.remove();
+                btn.insertBefore(thumb, btn.firstChild);
+            }
+
+            thumb.src = `${getCoverUrl(coverBasePath)}?t=${Date.now()}`;
+        }
+
+        function updateMovieButtonsForCover(coverBasePath) {
+            document.querySelectorAll('.movie-item-btn').forEach(btn => {
+                const isSameMovie = btn.dataset.path === coverBasePath;
+                const isSameSeries = btn.dataset.folder && btn.dataset.folder === coverBasePath;
+                if (isSameMovie || isSameSeries) {
+                    ensureMovieButtonCover(btn, coverBasePath);
+                }
+            });
+        }
+
+        async function uploadCoverImage(file) {
+            if (!selectedMovie || !file) return;
+
+            const statusEl = document.getElementById('cover-upload-status');
+            const uploadBtn = document.getElementById('btn-upload-cover');
+            const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+
+            if (!allowedTypes.includes(file.type)) {
+                statusEl.textContent = 'Only JPEG, PNG, or WebP images are supported.';
+                statusEl.className = 'text-xs text-red-400';
+                return;
+            }
+
+            if (file.size > 10 * 1024 * 1024) {
+                statusEl.textContent = 'Cover image must be 10MB or smaller.';
+                statusEl.className = 'text-xs text-red-400';
+                return;
+            }
+
+            try {
+                uploadBtn.disabled = true;
+                uploadBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                statusEl.textContent = 'Uploading...';
+                statusEl.className = 'text-xs text-slate-400';
+
+                const res = await fetch(`${baseUrl}/movies/${encodeURIComponent(selectedMovie)}/cover`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': file.type },
+                    body: file
+                });
+
+                const data = await res.json().catch(() => ({}));
+
+                if (!res.ok) {
+                    throw new Error(data.error || 'Failed to upload cover');
+                }
+
+                const coverBasePath = data.coverBasePath || selectedMovie;
+                updateCoverPreview(selectedMovie, true, coverBasePath);
+                updateMovieButtonsForCover(coverBasePath);
+                statusEl.textContent = 'Cover updated.';
+                statusEl.className = 'text-xs text-green-400';
+            } catch (err) {
+                statusEl.textContent = err.message || 'Upload failed.';
+                statusEl.className = 'text-xs text-red-400';
+            } finally {
+                uploadBtn.disabled = false;
+                uploadBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                document.getElementById('cover-upload-input').value = '';
+            }
         }
 
         // Select Movie
@@ -561,7 +645,8 @@
             
             // Reset state
             document.getElementById('movie-title').textContent = filename.split('/').pop();
-            updateCoverPreview(filename, btnElement?.dataset.hasCover === 'true');
+            document.getElementById('cover-upload-status').textContent = '';
+            updateCoverPreview(filename, btnElement?.dataset.hasCover === 'true', btnElement?.dataset.coverBasePath || filename);
             hideProgress();
             stopPlayer();
             document.getElementById('btn-copy-m3u8').classList.add('hidden');
@@ -613,7 +698,11 @@
                     document.getElementById('progress-text').textContent = 'Completed!';
                     document.getElementById('progress-text').classList.add('text-green-400');
                     document.getElementById('btn-copy-m3u8').classList.remove('hidden');
-                    updateCoverPreview(selectedMovie, true);
+                    const selectedBtn = getSelectedMovieButton();
+                    const coverBasePath = selectedBtn?.dataset.hasCover === 'true'
+                        ? selectedBtn.dataset.coverBasePath || selectedMovie
+                        : selectedMovie;
+                    updateCoverPreview(selectedMovie, true, coverBasePath);
                     
                     // Setup Player
                     setupPlayer(selectedMovie);
@@ -666,6 +755,15 @@
                 console.error('Failed to copy link', err);
                 showCopyButtonState(false);
             }
+        });
+
+        document.getElementById('btn-upload-cover').addEventListener('click', () => {
+            if (!selectedMovie) return;
+            document.getElementById('cover-upload-input').click();
+        });
+
+        document.getElementById('cover-upload-input').addEventListener('change', (event) => {
+            uploadCoverImage(event.target.files[0]);
         });
 
         // Web Player Setup
@@ -819,7 +917,10 @@
             const movieBtns = document.querySelectorAll(`.movie-item-btn`);
             movieBtns.forEach(btn => {
                 if (btn.dataset.path === data.filename && data.status === 'completed') {
-                    ensureMovieButtonCover(btn, data.filename);
+                    const coverBasePath = btn.dataset.hasCover === 'true'
+                        ? btn.dataset.coverBasePath || data.filename
+                        : data.filename;
+                    ensureMovieButtonCover(btn, coverBasePath);
 
                     // Check if already has READY badge
                     if (!btn.querySelector('.ready-badge')) {
