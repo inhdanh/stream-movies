@@ -98,6 +98,16 @@ function cleanTagValue(value, fallback) {
   return text.replace(/["\r\n]/g, '');
 }
 
+function getUniqueRenditionName(name, usedNames, fallback) {
+  const baseName = cleanTagValue(name, fallback);
+  const key = baseName.toLowerCase();
+  const count = usedNames.get(key) || 0;
+  usedNames.set(key, count + 1);
+
+  if (count === 0) return baseName;
+  return `${baseName} (${count + 1})`;
+}
+
 function safeId(value, fallback) {
   const id = String(value || fallback || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   return id || fallback;
@@ -263,6 +273,7 @@ function buildRenditions(info, outputDir, options = {}) {
   });
 
   const defaultAudioIndex = getDefaultAudioIndex(info.audio);
+  const usedAudioNames = new Map();
   const audio = info.audio.map((stream, index) => {
     const language = safeId(stream.languageCode, `aud${index}`);
     const id = `${language}_${index}`;
@@ -274,7 +285,7 @@ function buildRenditions(info, outputDir, options = {}) {
       outputIndex: index,
       language,
       id,
-      name: cleanTagValue(stream.title || stream.language, language),
+      name: getUniqueRenditionName(stream.displayTitle || stream.title || stream.language, usedAudioNames, language),
       channels: stream.channels || 2,
       isDefault: index === defaultAudioIndex,
       playlist

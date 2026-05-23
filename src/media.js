@@ -7,19 +7,166 @@ const { loadMetadata, getMovieDisplayMetadata } = require('./metadata');
 const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.wmv'];
 const SAFE_FALLBACK_NAME = 'media';
 
-const LANGUAGE_MAP = {
-  'vie': 'Vietnamese',
-  'chi': 'Chinese',
-  'zho': 'Chinese',
-  'eng': 'English',
-  'jpn': 'Japanese',
-  'kor': 'Korean',
-  'fre': 'French',
-  'ger': 'German',
-  'spa': 'Spanish',
-  'rus': 'Russian',
-  'und': 'Unknown'
+const LANGUAGE_CODE_ALIASES = {
+  chi: 'zh',
+  zho: 'zh',
+  cmn: 'zh',
+  vie: 'vi',
+  eng: 'en',
+  jpn: 'ja',
+  kor: 'ko',
+  fre: 'fr',
+  fra: 'fr',
+  ger: 'de',
+  deu: 'de',
+  spa: 'es',
+  rus: 'ru',
+  und: 'und'
 };
+
+const LANGUAGE_MAP = {
+  zh: 'Chinese',
+  vi: 'Vietnamese',
+  en: 'English',
+  ja: 'Japanese',
+  ko: 'Korean',
+  fr: 'French',
+  de: 'German',
+  es: 'Spanish',
+  ru: 'Russian',
+  und: 'Unknown'
+};
+
+const AUDIO_TITLE_KEYWORDS = [
+  'audio',
+  'commentary',
+  'descriptive',
+  'dub',
+  'dubbed',
+  'original',
+  'surround',
+  'stereo',
+  'thuyet',
+  'thuyết',
+  'tieng',
+  'tiếng',
+  'long tieng',
+  'lồng tiếng',
+  'mandarin',
+  'cantonese',
+  'viet'
+];
+
+function getTagValue(tags, names) {
+  for (const name of names) {
+    const value = tags[name];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim().replace(/[\r\n]+/g, ' ');
+    }
+  }
+  return '';
+}
+
+function normalizeLanguageCode(value) {
+  const raw = String(value || 'und').trim().toLowerCase().replace(/_/g, '-');
+  if (!raw) return 'und';
+
+  const parts = raw.split('-').filter(Boolean);
+  const primary = LANGUAGE_CODE_ALIASES[parts[0]] || parts[0];
+  if (!primary || primary === 'und') return 'und';
+
+  const normalizedParts = [primary, ...parts.slice(1).map(part => (
+    part.length === 2 ? part.toUpperCase() : part
+  ))];
+
+  return normalizedParts.join('-');
+}
+
+function getLanguageName(languageCode) {
+  const primary = String(languageCode || 'und').split('-')[0];
+  return LANGUAGE_MAP[primary] || languageCode || 'Unknown';
+}
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function isUsefulAudioTitle(title, language) {
+  const text = String(title || '').trim();
+  if (!text) return false;
+
+  const normalizedTitle = normalizeSearchText(text);
+  const normalizedLanguage = normalizeSearchText(language);
+  if (normalizedTitle === normalizedLanguage) return false;
+
+  if (/^(aac|ac-?3|e-?ac-?3|eac3|flac|truehd|dts|opus|mp3)([\s._-]*(2\.0|5\.1|7\.1|stereo|mono|audio))*$/i.test(text)) {
+    return false;
+  }
+
+  const hasDescriptor = AUDIO_TITLE_KEYWORDS.some(keyword => normalizedTitle.includes(keyword));
+  if (hasDescriptor) return true;
+
+  if (/[()[\]\s]/.test(text)) return true;
+
+  // Release-group tags such as "canodinh" are valid MKV titles but poor
+  // labels for a player audio menu. Keep single-token titles only when
+  // they look intentionally descriptive.
+  if (/^[a-z0-9_-]{3,24}$/i.test(text)) return false;
+
+  return true;
+}
+
+function getAudioCodecLabel(stream) {
+  const codec = String(stream.codec_name || '').toLowerCase();
+  const profile = String(stream.profile || '').toLowerCase();
+  const hasAtmos = profile.includes('atmos');
+
+  if (codec === 'eac3') return hasAtmos ? 'Dolby Digital Plus Atmos' : 'Dolby Digital Plus';
+  if (codec === 'ac3') return 'Dolby Digital';
+  if (codec === 'truehd') return hasAtmos ? 'Dolby TrueHD Atmos' : 'Dolby TrueHD';
+  if (codec === 'aac') return 'AAC';
+  if (codec === 'flac') return 'FLAC';
+  if (codec === 'opus') return 'Opus';
+  if (codec === 'mp3') return 'MP3';
+  if (codec === 'dts') return 'DTS';
+
+  return codec ? codec.toUpperCase() : 'Audio';
+}
+
+function getAudioChannelLabel(stream) {
+  const layout = String(stream.channel_layout || '').toLowerCase();
+  const channels = Number(stream.channels);
+
+  if (layout.includes('7.1') || channels >= 8) return '7.1';
+  if (layout.includes('5.1') || channels >= 6) return '5.1';
+  if (layout.includes('stereo') || channels === 2) return 'Stereo';
+  if (layout.includes('mono') || channels === 1) return 'Mono';
+  if (Number.isFinite(channels) && channels > 0) return `${channels} ch`;
+
+  return '';
+}
+
+function getAudioRoleLabels(disposition = {}) {
+  const roles = [];
+  if (disposition.original === 1) roles.push('Original');
+  if (disposition.dub === 1) roles.push('Dub');
+  if (disposition.comment === 1) roles.push('Commentary');
+  if (disposition.visual_impaired === 1 || disposition.descriptions === 1) roles.push('Audio Description');
+  if (disposition.hearing_impaired === 1) roles.push('Hard of Hearing');
+  return roles;
+}
+
+function buildAudioFallbackTitle(stream, language, disposition) {
+  return [
+    language,
+    ...getAudioRoleLabels(disposition),
+    getAudioCodecLabel(stream),
+    getAudioChannelLabel(stream)
+  ].filter(Boolean).join(' - ');
+}
 
 /**
  * Convert file/folder names into URL-friendly names.
@@ -250,15 +397,17 @@ async function getMediaInfo(filePath) {
         const tags = stream.tags || {};
         const disposition = stream.disposition || {};
         
-        let langCode = (tags.language || tags.LANGUAGE || 'und').toLowerCase();
-        let language = LANGUAGE_MAP[langCode] || langCode;
+        const langCode = normalizeLanguageCode(getTagValue(tags, ['language', 'LANGUAGE']));
+        const language = getLanguageName(langCode);
+        const title = getTagValue(tags, ['title', 'TITLE']);
         
         const streamInfo = {
           index: stream.index,
           codec: stream.codec_name,
+          codecProfile: stream.profile || '',
           language: language,
           languageCode: langCode,
-          title: tags.title || tags.TITLE || '',
+          title,
           isDefault: disposition.default === 1,
           isForced: disposition.forced === 1
         };
@@ -274,13 +423,10 @@ async function getMediaInfo(filePath) {
           info.video.push(streamInfo);
         } else if (codecType === 'audio') {
           streamInfo.channels = stream.channels;
-          // Generate a descriptive title if missing
-          if (!streamInfo.title) {
-            let desc = language;
-            if (stream.codec_name) desc += ` (${stream.codec_name})`;
-            if (stream.channels) desc += ` ${stream.channels === 6 ? '5.1' : stream.channels === 2 ? 'Stereo' : stream.channels + 'ch'}`;
-            streamInfo.title = desc;
-          }
+          streamInfo.channelLayout = stream.channel_layout || '';
+          streamInfo.displayTitle = isUsefulAudioTitle(streamInfo.title, language)
+            ? streamInfo.title
+            : buildAudioFallbackTitle(stream, language, disposition);
           info.audio.push(streamInfo);
         } else if (codecType === 'subtitle') {
           if (!streamInfo.title) {
@@ -313,14 +459,39 @@ async function getMediaInfo(filePath) {
  * @param {string} hlsOutputDir HLS output directory
  * @param {object} options { deleteOriginal: boolean }
  */
+function getAssociatedHlsPaths(hlsOutputDir, relPath) {
+  const hlsPath = path.join(hlsOutputDir, relPath);
+  const parentDir = path.dirname(hlsPath);
+  const outputName = path.basename(hlsPath);
+  const paths = [hlsPath];
+
+  if (!fs.existsSync(parentDir)) return paths;
+
+  const entries = fs.readdirSync(parentDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const isStagingOutput = (
+      entry.name.startsWith(`${outputName}.tmp-`) ||
+      entry.name.startsWith(`${outputName}.copy-`)
+    );
+
+    if (isStagingOutput) {
+      paths.push(path.join(parentDir, entry.name));
+    }
+  }
+
+  return paths;
+}
+
 async function deleteMedia(relPath, moviesDir, hlsOutputDir, options = {}) {
   const { deleteOriginal = false } = options;
   
   // 1. Delete HLS data
-  const hlsPath = path.join(hlsOutputDir, relPath);
-  if (fs.existsSync(hlsPath)) {
-    console.log(`[Media] Deleting HLS data: ${hlsPath}`);
-    fs.rmSync(hlsPath, { recursive: true, force: true });
+  const hlsPaths = getAssociatedHlsPaths(hlsOutputDir, relPath);
+  for (const hlsPath of hlsPaths) {
+    if (fs.existsSync(hlsPath)) {
+      console.log(`[Media] Deleting HLS data: ${hlsPath}`);
+      fs.rmSync(hlsPath, { recursive: true, force: true });
+    }
   }
 
   // 2. Delete original file
