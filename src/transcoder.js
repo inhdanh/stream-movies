@@ -13,6 +13,18 @@ const COVER_IMAGE_NAME = 'cover.jpg';
 const STALE_STAGING_MIN_AGE_MS = 10 * 60 * 1000;
 const TEXT_SUBTITLE_CODECS = new Set(['subrip', 'ass', 'ssa', 'mov_text', 'srt', 'webvtt']);
 const WINDOWS_RETRYABLE_FS_CODES = new Set(['EPERM', 'EACCES', 'EBUSY', 'ENOTEMPTY']);
+const CPU_TRANSCODE_ACCELERATION = {
+  name: 'cpu',
+  encoder: 'libx264',
+  preset: 'medium',
+  scaleFilter: (width, height) => `scale=${width}:${height}:flags=lanczos`
+};
+const NVIDIA_TRANSCODE_ACCELERATION = {
+  name: 'nvidia',
+  encoder: 'h264_nvenc',
+  preset: 'medium',
+  scaleFilter: (width, height) => `scale=${width}:${height}:flags=lanczos`
+};
 
 const VIDEO_LADDER = [
   {
@@ -80,6 +92,7 @@ const VIDEO_LADDER_NAMES = new Set(VIDEO_LADDER.map(profile => profile.name));
 
 const transcodeEvents = new EventEmitter();
 const transcodeJobs = new Map();
+let transcodeAccelerationPromise = null;
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -142,6 +155,81 @@ function parseFrameRate(value) {
 function formatFrameRate(value) {
   const frameRate = parseFrameRate(value);
   return frameRate.toFixed(3).replace(/\.?0+$/, '');
+}
+
+function runProbeCommand(command, args, options = {}) {
+  return new Promise(resolve => {
+    const proc = spawn(command, args, {
+      windowsHide: true,
+      ...options
+    });
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout?.on('data', data => {
+      stdout += data.toString();
+    });
+
+    proc.stderr?.on('data', data => {
+      stderr += data.toString();
+    });
+
+    proc.on('error', error => {
+      resolve({
+        ok: false,
+        stdout,
+        stderr,
+        error
+      });
+    });
+
+    proc.on('close', code => {
+      resolve({
+        ok: code === 0,
+        code,
+        stdout,
+        stderr
+      });
+    });
+  });
+}
+
+async function hasNvidiaGpu() {
+  const result = await runProbeCommand('nvidia-smi', ['-L']);
+  return result.ok && /GPU\s+\d+:/i.test(result.stdout);
+}
+
+async function ffmpegSupportsEncoder(encoder) {
+  const result = await runProbeCommand('ffmpeg', ['-hide_banner', '-encoders']);
+  return result.ok && new RegExp(`\\b${encoder}\\b`).test(result.stdout);
+}
+
+async function detectTranscodeAcceleration() {
+  const [hasGpu, hasNvenc] = await Promise.all([
+    hasNvidiaGpu(),
+    ffmpegSupportsEncoder(NVIDIA_TRANSCODE_ACCELERATION.encoder)
+  ]);
+
+  if (hasGpu && hasNvenc) {
+    console.log('[Transcode] NVIDIA GPU detected; using h264_nvenc for video encoding');
+    return NVIDIA_TRANSCODE_ACCELERATION;
+  }
+
+  if (hasGpu && !hasNvenc) {
+    console.warn('[Transcode] NVIDIA GPU detected, but this ffmpeg build does not include h264_nvenc; using libx264');
+  } else {
+    console.log('[Transcode] NVIDIA GPU not detected; using libx264');
+  }
+
+  return CPU_TRANSCODE_ACCELERATION;
+}
+
+async function getTranscodeAcceleration() {
+  if (!transcodeAccelerationPromise) {
+    transcodeAccelerationPromise = detectTranscodeAcceleration();
+  }
+
+  return transcodeAccelerationPromise;
 }
 
 function even(value) {
@@ -353,7 +441,7 @@ function buildStreamMap(renditions) {
   return streamMap.join(' ');
 }
 
-function buildMediaArgs(filePath, outputDir, info, renditions) {
+function buildMediaArgs(filePath, outputDir, info, renditions, acceleration = CPU_TRANSCODE_ACCELERATION) {
   const gopSize = getGopSize(info);
   const args = [
     '-hide_banner',
@@ -368,8 +456,8 @@ function buildMediaArgs(filePath, outputDir, info, renditions) {
   renditions.video.forEach((video, index) => {
     args.push(
       '-map', `0:${renditions.sourceVideoIndex}`,
-      `-c:v:${index}`, 'libx264',
-      `-filter:v:${index}`, `scale=${video.width}:${video.height}:flags=lanczos`,
+      `-c:v:${index}`, acceleration.encoder,
+      `-filter:v:${index}`, acceleration.scaleFilter(video.width, video.height),
       `-b:v:${index}`, video.bitrate,
       `-maxrate:v:${index}`, video.maxrate,
       `-bufsize:v:${index}`, video.bufsize,
@@ -382,7 +470,7 @@ function buildMediaArgs(filePath, outputDir, info, renditions) {
   });
 
   args.push(
-    '-preset', 'medium',
+    '-preset', acceleration.preset,
     '-pix_fmt', 'yuv420p',
     '-force_key_frames', `expr:gte(t,n_forced*${HLS_SEGMENT_SECONDS})`
   );
@@ -868,8 +956,10 @@ async function replaceOutputDirectory(stagingDir, outputDir) {
 
 async function runTranscode(filename, filePath, outputDir, stagingDir, info, renditions) {
   const durationMs = Number(info.duration || 0) * 1000;
-  const mediaArgs = buildMediaArgs(filePath, stagingDir, info, renditions);
+  const acceleration = await getTranscodeAcceleration();
+  const mediaArgs = buildMediaArgs(filePath, stagingDir, info, renditions, acceleration);
 
+  console.log(`[Transcode] Using ${acceleration.name === 'nvidia' ? 'NVIDIA NVENC' : 'CPU'} video encoder`);
   console.log(`[Transcode] ffmpeg ${mediaArgs.join(' ')}`);
 
   await runFfmpeg(mediaArgs, text => {
