@@ -16,6 +16,7 @@ const PORT = 3000;
 // The base directory for movies and HLS output
 const MOVIES_DIR = 'D:/Movies';
 const HLS_OUTPUT_DIR = path.join(MOVIES_DIR, '.hls');
+const CLIENT_DIST_DIR = path.join(__dirname, 'dist');
 const COVER_IMAGE_NAME = 'cover.jpg';
 const COVER_UPLOAD_LIMIT = '10mb';
 const COVER_UPLOAD_TYPES = new Map([
@@ -138,7 +139,6 @@ if (!fs.existsSync(HLS_OUTPUT_DIR)) {
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public')); // Serve the web UI
 
 // 1. Get list of movies
 app.get('/movies', async (req, res) => {
@@ -229,11 +229,11 @@ app.get('/movies/:filename/progress', (req, res) => {
 // 6. Save playback progress
 app.post('/movies/:filename/progress', (req, res) => {
   const filename = req.params.filename;
-  const { seconds, duration } = req.body;
+  const { seconds } = req.body;
   if (typeof seconds !== 'number') {
     return res.status(400).json({ error: 'Seconds must be a number' });
   }
-  saveProgress(filename, seconds, duration);
+  saveProgress(filename, seconds);
   res.json({ success: true });
 });
 
@@ -302,6 +302,16 @@ app.use('/stream', (req, res, next) => {
      transcodeEvents.off('finished', onFinished);
    });
  });
+
+// Serve the React CMS build after API and streaming routes.
+app.use(express.static(CLIENT_DIST_DIR));
+app.get(/.*/, (req, res, next) => {
+  const indexPath = path.join(CLIENT_DIST_DIR, 'index.html');
+  if (!req.accepts('html') || !fs.existsSync(indexPath)) {
+    return next();
+  }
+  res.sendFile(indexPath);
+});
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on port ${PORT}`);

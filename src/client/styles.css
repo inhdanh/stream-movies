@@ -1,0 +1,49 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 82% 16%, rgba(38, 198, 218, 0.1), transparent 28rem),
+    radial-gradient(circle at 12% 0%, rgba(124, 77, 255, 0.14), transparent 24rem),
+    linear-gradient(135deg, #090e16 0%, #0c1420 48%, #070b12 100%);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+video {
+  aspect-ratio: 16 / 9;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(9, 14, 22, 0.55);
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 8px;
+  background: rgba(144, 164, 174, 0.34);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(38, 198, 218, 0.54);
+}
