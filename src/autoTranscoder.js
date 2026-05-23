@@ -52,7 +52,7 @@ class AutoTranscoder {
     console.log(`[AutoTranscoder] Starting auto-transcode for: ${moviePath}`);
     
     try {
-      await transcodeToHls(fullPath, this.moviesDir, this.hlsOutputDir);
+      await transcodeToHls(fullPath, this.moviesDir, this.hlsOutputDir, { highestOnly: true });
       const status = await waitForTranscode(moviePath);
 
       if (status.status === 'completed') {

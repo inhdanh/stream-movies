@@ -10,6 +10,7 @@ const AUDIO_BITRATE = '160k';
 const AUDIO_GROUP_ID = 'audio';
 const SUBTITLE_GROUP_ID = 'subs';
 const COVER_IMAGE_NAME = 'cover.jpg';
+const STALE_STAGING_MIN_AGE_MS = 10 * 60 * 1000;
 const TEXT_SUBTITLE_CODECS = new Set(['subrip', 'ass', 'ssa', 'mov_text', 'srt', 'webvtt']);
 const WINDOWS_RETRYABLE_FS_CODES = new Set(['EPERM', 'EACCES', 'EBUSY', 'ENOTEMPTY']);
 
@@ -75,6 +76,7 @@ const VIDEO_LADDER = [
     codecs: 'avc1.4d401e'
   }
 ];
+const VIDEO_LADDER_NAMES = new Set(VIDEO_LADDER.map(profile => profile.name));
 
 const transcodeEvents = new EventEmitter();
 const transcodeJobs = new Map();
@@ -173,17 +175,42 @@ function getDefaultAudioIndex(audioStreams) {
   return explicitDefault >= 0 ? explicitDefault : 0;
 }
 
-function getTargetWidth(sourceWidth, sourceHeight, targetHeight, maxWidth) {
-  if (!sourceWidth || !sourceHeight) return maxWidth;
-  return even(Math.min(maxWidth, sourceWidth * (targetHeight / sourceHeight)));
+function getTargetDimensions(sourceWidth, sourceHeight, maxWidth, maxHeight) {
+  if (!sourceWidth || !sourceHeight) {
+    return {
+      width: maxWidth,
+      height: maxHeight
+    };
+  }
+
+  const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight, 1);
+  return {
+    width: even(sourceWidth * scale),
+    height: even(sourceHeight * scale)
+  };
 }
 
-function buildVideoRenditions(video) {
+function normalizeSelectedResolutions(resolutions) {
+  if (!Array.isArray(resolutions) || resolutions.length === 0) {
+    return null;
+  }
+
+  const selected = new Set(
+    resolutions
+      .map(resolution => String(resolution || '').trim())
+      .filter(resolution => VIDEO_LADDER_NAMES.has(resolution))
+  );
+
+  return selected.size > 0 ? selected : null;
+}
+
+function buildVideoRenditions(video, options = {}) {
   const sourceWidth = even(video.width || 1920);
   const sourceHeight = even(video.height || 1080);
   const frameRate = formatFrameRate(video.frameRate);
+  const selectedResolutions = normalizeSelectedResolutions(options.resolutions);
 
-  if (sourceHeight < 720) {
+  if (sourceWidth < 1280 && sourceHeight < 720) {
     const name = `${sourceHeight}p`;
     const averageBandwidth = Math.min(1200000, Math.max(600000, sourceWidth * sourceHeight * 3));
 
@@ -203,23 +230,34 @@ function buildVideoRenditions(video) {
     }];
   }
 
-  return VIDEO_LADDER
-    .filter(profile => profile.height <= sourceHeight)
-    .map(profile => ({
-      ...profile,
-      width: getTargetWidth(sourceWidth, sourceHeight, profile.height, profile.width),
-      frameRate,
-      playlist: `video/${profile.name}/prog_index.m3u8`
-    }));
+  const profiles = VIDEO_LADDER
+    .filter(profile => !selectedResolutions || selectedResolutions.has(profile.name))
+    .filter(profile => profile.width <= sourceWidth || profile.height <= sourceHeight);
+
+  return (options.highestOnly ? profiles.slice(0, 1) : profiles)
+    .map(profile => {
+      const dimensions = getTargetDimensions(sourceWidth, sourceHeight, profile.width, profile.height);
+
+      return {
+        ...profile,
+        ...dimensions,
+        frameRate,
+        playlist: `video/${profile.name}/prog_index.m3u8`
+      };
+    });
 }
 
-function buildRenditions(info, outputDir) {
+function buildRenditions(info, outputDir, options = {}) {
   const video = info.video[0];
   if (!video) {
     throw new Error('No video stream found');
   }
 
-  const videoRenditions = buildVideoRenditions(video);
+  const videoRenditions = buildVideoRenditions(video, options);
+  if (videoRenditions.length === 0) {
+    throw new Error('No selected transcode resolutions are compatible with this source video');
+  }
+
   videoRenditions.forEach(rendition => {
     ensureDir(path.join(outputDir, 'video', rendition.name));
   });
@@ -683,6 +721,82 @@ function isRetryableFsError(error) {
   return WINDOWS_RETRYABLE_FS_CODES.has(error?.code);
 }
 
+async function cleanupStaleOutputSiblings(outputDir, currentStagingDir = null) {
+  const parentDir = path.dirname(outputDir);
+  const outputName = path.basename(outputDir);
+  const currentPath = currentStagingDir ? path.resolve(currentStagingDir) : null;
+  const now = Date.now();
+
+  if (!fs.existsSync(parentDir)) return;
+
+  const entries = fs.readdirSync(parentDir, { withFileTypes: true });
+  const staleDirs = entries
+    .filter(entry => entry.isDirectory())
+    .filter(entry => (
+      entry.name.startsWith(`${outputName}.tmp-`) ||
+      entry.name.startsWith(`${outputName}.copy-`)
+    ))
+    .map(entry => path.join(parentDir, entry.name))
+    .filter(dir => path.resolve(dir) !== currentPath)
+    .filter(dir => {
+      const stats = fs.statSync(dir);
+      return now - stats.mtimeMs >= STALE_STAGING_MIN_AGE_MS;
+    });
+
+  for (const dir of staleDirs) {
+    try {
+      await retryFsOperation('Remove stale HLS staging output', () => {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }, { attempts: 6, delayMs: 500 });
+      console.log(`[Transcode] Removed stale staging output: ${dir}`);
+    } catch (error) {
+      console.warn(`[Transcode] Could not remove stale staging output ${dir}: ${error.message}`);
+    }
+  }
+}
+
+async function cleanupStaleTranscodeOutputs(outputBaseDir) {
+  if (!outputBaseDir || !fs.existsSync(outputBaseDir)) return;
+
+  const pending = [outputBaseDir];
+  const now = Date.now();
+
+  while (pending.length > 0) {
+    const dir = pending.pop();
+    let entries;
+
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (error) {
+      console.warn(`[Transcode] Could not scan HLS directory ${dir}: ${error.message}`);
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+
+      const childDir = path.join(dir, entry.name);
+      const isStagingOutput = /\.tmp-\d+$/.test(entry.name) || /\.copy-\d+$/.test(entry.name);
+      if (!isStagingOutput) {
+        pending.push(childDir);
+        continue;
+      }
+
+      try {
+        const stats = fs.statSync(childDir);
+        if (now - stats.mtimeMs < STALE_STAGING_MIN_AGE_MS) continue;
+
+        await retryFsOperation('Remove stale HLS staging output', () => {
+          fs.rmSync(childDir, { recursive: true, force: true });
+        }, { attempts: 6, delayMs: 500 });
+        console.log(`[Transcode] Removed stale staging output: ${childDir}`);
+      } catch (error) {
+        console.warn(`[Transcode] Could not remove stale staging output ${childDir}: ${error.message}`);
+      }
+    }
+  }
+}
+
 async function retryFsOperation(description, operation, options = {}) {
   const attempts = options.attempts || 12;
   const delayMs = options.delayMs || 250;
@@ -769,6 +883,7 @@ async function runTranscode(filename, filePath, outputDir, stagingDir, info, ren
   validateOutput(stagingDir, renditions);
   try {
     await replaceOutputDirectory(stagingDir, outputDir);
+    await cleanupStaleOutputSiblings(outputDir);
   } catch (error) {
     error.keepStaging = true;
     error.message = `${error.message}. Valid staged output was kept at ${stagingDir}`;
@@ -781,7 +896,7 @@ async function runTranscode(filename, filePath, outputDir, stagingDir, info, ren
   console.log(`[Transcode] Finished: ${filename}`);
 }
 
-async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
+async function transcodeToHls(filePath, moviesDir, outputBaseDir, options = {}) {
   const filename = path.relative(moviesDir, filePath).replace(/\\/g, '/');
   const currentJob = transcodeJobs.get(filename);
 
@@ -793,6 +908,9 @@ async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
   const masterPath = path.join(outputDir, 'master.m3u8');
   if (fs.existsSync(masterPath)) {
     updateJob(filename, { id: 'existing', status: 'completed', progress: 100 });
+    cleanupStaleOutputSiblings(outputDir).catch(error => {
+      console.warn(`[Transcode] Could not clean stale staging outputs for ${filename}: ${error.message}`);
+    });
     return 'existing';
   }
 
@@ -800,7 +918,7 @@ async function transcodeToHls(filePath, moviesDir, outputBaseDir) {
   const stagingDir = `${outputDir}.tmp-${Date.now()}`;
   ensureDir(stagingDir);
 
-  const renditions = buildRenditions(info, stagingDir);
+  const renditions = buildRenditions(info, stagingDir, options);
   const job = createJob(filename);
 
   job.promise = runTranscode(filename, filePath, outputDir, stagingDir, info, renditions)
@@ -850,5 +968,6 @@ module.exports = {
   transcodeToHls,
   waitForTranscode,
   getTranscodeStatus,
+  cleanupStaleTranscodeOutputs,
   transcodeEvents
 };

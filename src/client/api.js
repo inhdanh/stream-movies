@@ -37,9 +37,11 @@ export async function uploadCover(path, file) {
   }).then(parseJsonResponse);
 }
 
-export async function startTranscode(path) {
+export async function startTranscode(path, resolutions) {
   return fetch(`/movies/${encodeMoviePath(path)}/transcode`, {
-    method: 'POST'
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resolutions })
   }).then(parseJsonResponse);
 }
 

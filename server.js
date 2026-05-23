@@ -5,7 +5,12 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 
 const { scanMovies, deleteMedia } = require('./src/media');
-const { transcodeToHls, getTranscodeStatus, transcodeEvents } = require('./src/transcoder');
+const {
+  transcodeToHls,
+  getTranscodeStatus,
+  cleanupStaleTranscodeOutputs,
+  transcodeEvents
+} = require('./src/transcoder');
 const { saveProgress, getProgress } = require('./src/storage');
 const { updateMovieMetadata } = require('./src/metadata');
 const AutoTranscoder = require('./src/autoTranscoder');
@@ -137,6 +142,10 @@ if (!fs.existsSync(HLS_OUTPUT_DIR)) {
   fs.mkdirSync(HLS_OUTPUT_DIR, { recursive: true });
 }
 
+cleanupStaleTranscodeOutputs(HLS_OUTPUT_DIR).catch(error => {
+  console.warn(`[Server] Could not clean stale HLS staging outputs: ${error.message}`);
+});
+
 app.use(cors());
 app.use(express.json());
 
@@ -183,7 +192,9 @@ app.post('/movies/:filename/transcode', async (req, res) => {
   }
 
   try {
-    const jobId = await transcodeToHls(filePath, MOVIES_DIR, HLS_OUTPUT_DIR);
+    const jobId = await transcodeToHls(filePath, MOVIES_DIR, HLS_OUTPUT_DIR, {
+      resolutions: req.body?.resolutions
+    });
     res.json({ message: 'Transcoding started', jobId });
   } catch (error) {
     console.error('Error starting transcode:', error);
