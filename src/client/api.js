@@ -41,7 +41,7 @@ export async function startTranscode(path, resolutions) {
   return fetch(`/movies/${encodeMoviePath(path)}/transcode`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resolutions })
+    body: JSON.stringify(resolutions ? { resolutions } : {})
   }).then(parseJsonResponse);
 }
 

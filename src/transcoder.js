@@ -6,12 +6,14 @@ const { getMediaInfo } = require('./media');
 
 const HLS_SEGMENT_SECONDS = 6;
 const HLS_PLAYLIST_VERSION = 7;
-const AUDIO_BITRATE = '160k';
+const AUDIO_BITRATE = '320k';
 const AUDIO_GROUP_ID = 'audio';
 const SUBTITLE_GROUP_ID = 'subs';
 const COVER_IMAGE_NAME = 'cover.jpg';
+const ORIGINAL_RENDITION_NAME = 'source';
 const STALE_STAGING_MIN_AGE_MS = 10 * 60 * 1000;
 const TEXT_SUBTITLE_CODECS = new Set(['subrip', 'ass', 'ssa', 'mov_text', 'srt', 'webvtt']);
+const BROWSER_SAFE_COPY_AUDIO_CODECS = new Set(['aac', 'mp3']);
 const WINDOWS_RETRYABLE_FS_CODES = new Set(['EPERM', 'EACCES', 'EBUSY', 'ENOTEMPTY']);
 const CPU_TRANSCODE_ACCELERATION = {
   name: 'cpu',
@@ -248,6 +250,52 @@ function bitrateToBits(value) {
   return Math.round(amount);
 }
 
+function getStreamBitrate(stream, fallback = 0) {
+  const parsed = Number.parseInt(stream?.bitRate, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getVideoCodecString(video) {
+  const codec = String(video?.codec || '').toLowerCase();
+  const profile = String(video?.codecProfile || '').toLowerCase();
+  const level = Number(video?.level);
+
+  if (codec === 'h264') {
+    const profilePart = profile.includes('high')
+      ? '6400'
+      : profile.includes('main')
+        ? '4d40'
+        : '42e0';
+    const levelHex = Number.isFinite(level) && level > 0
+      ? Math.round(level).toString(16).padStart(2, '0')
+      : '29';
+    return `avc1.${profilePart}${levelHex}`;
+  }
+
+  if (codec === 'hevc' || codec === 'h265') return 'hvc1';
+  if (codec === 'av1') return 'av01';
+  if (codec === 'vp9') return 'vp09';
+  return '';
+}
+
+function getAudioCodecString(audio) {
+  const codec = String(audio?.codec || '').toLowerCase();
+  if (audio?.copy === false) return 'mp4a.40.2';
+  if (codec === 'aac') return 'mp4a.40.2';
+  if (codec === 'mp3') return 'mp4a.6b';
+  if (codec === 'ac3') return 'ac-3';
+  if (codec === 'eac3') return 'ec-3';
+  if (codec === 'alac') return 'alac';
+  if (codec === 'flac') return 'fLaC';
+  if (codec === 'opus') return 'opus';
+  return '';
+}
+
+function getAacBitrateForChannels(channels) {
+  if (channels >= 6) return '640k';
+  return AUDIO_BITRATE;
+}
+
 function createJob(filename) {
   const job = {
     id: Date.now().toString(),
@@ -307,6 +355,25 @@ function buildVideoRenditions(video, options = {}) {
   const sourceHeight = even(video.height || 1080);
   const frameRate = formatFrameRate(video.frameRate);
   const selectedResolutions = normalizeSelectedResolutions(options.resolutions);
+  const preserveOriginalQuality = options.preserveOriginalQuality !== false;
+
+  if (preserveOriginalQuality) {
+    const averageBandwidth = getStreamBitrate(video, Math.max(1000000, sourceWidth * sourceHeight * 3));
+
+    return [{
+      name: ORIGINAL_RENDITION_NAME,
+      width: sourceWidth,
+      height: sourceHeight,
+      bitrate: `${Math.ceil(averageBandwidth / 1000)}k`,
+      averageBandwidth,
+      maxrate: `${Math.ceil(averageBandwidth * 1.2 / 1000)}k`,
+      bufsize: `${Math.ceil(averageBandwidth * 2 / 1000)}k`,
+      codecs: getVideoCodecString(video),
+      frameRate,
+      copy: true,
+      playlist: `video/${ORIGINAL_RENDITION_NAME}/prog_index.m3u8`
+    }];
+  }
 
   if (sourceWidth < 1280 && sourceHeight < 720) {
     const name = `${sourceHeight}p`;
@@ -366,18 +433,30 @@ function buildRenditions(info, outputDir, options = {}) {
     const language = safeId(stream.languageCode, `aud${index}`);
     const id = `${language}_${index}`;
     const playlist = `audio/${id}/prog_index.m3u8`;
+    const codec = String(stream.codec || '').toLowerCase();
+    const copy = BROWSER_SAFE_COPY_AUDIO_CODECS.has(codec);
+    const channels = stream.channels || 2;
+    const bitrate = copy
+      ? getStreamBitrate(stream, bitrateToBits(AUDIO_BITRATE))
+      : bitrateToBits(getAacBitrateForChannels(channels));
     ensureDir(path.join(outputDir, 'audio', id));
 
-    return {
+    const audioRendition = {
       inputIndex: stream.index,
       outputIndex: index,
+      codec: stream.codec,
+      bitrate,
+      copy,
       language,
       id,
       name: getUniqueRenditionName(stream.displayTitle || stream.title || stream.language, usedAudioNames, language),
-      channels: stream.channels || 2,
+      channels,
       isDefault: index === defaultAudioIndex,
       playlist
     };
+
+    audioRendition.codecString = getAudioCodecString(audioRendition);
+    return audioRendition;
   });
 
   const subtitles = info.subtitle
@@ -443,6 +522,7 @@ function buildStreamMap(renditions) {
 
 function buildMediaArgs(filePath, outputDir, info, renditions, acceleration = CPU_TRANSCODE_ACCELERATION) {
   const gopSize = getGopSize(info);
+  const hasEncodedVideo = renditions.video.some(video => !video.copy);
   const args = [
     '-hide_banner',
     '-y',
@@ -454,8 +534,14 @@ function buildMediaArgs(filePath, outputDir, info, renditions, acceleration = CP
   ];
 
   renditions.video.forEach((video, index) => {
+    args.push('-map', `0:${renditions.sourceVideoIndex}`);
+
+    if (video.copy) {
+      args.push(`-c:v:${index}`, 'copy');
+      return;
+    }
+
     args.push(
-      '-map', `0:${renditions.sourceVideoIndex}`,
       `-c:v:${index}`, acceleration.encoder,
       `-filter:v:${index}`, acceleration.scaleFilter(video.width, video.height),
       `-b:v:${index}`, video.bitrate,
@@ -469,18 +555,25 @@ function buildMediaArgs(filePath, outputDir, info, renditions, acceleration = CP
     );
   });
 
-  args.push(
-    '-preset', acceleration.preset,
-    '-pix_fmt', 'yuv420p',
-    '-force_key_frames', `expr:gte(t,n_forced*${HLS_SEGMENT_SECONDS})`
-  );
+  if (hasEncodedVideo) {
+    args.push(
+      '-preset', acceleration.preset,
+      '-pix_fmt', 'yuv420p',
+      '-force_key_frames', `expr:gte(t,n_forced*${HLS_SEGMENT_SECONDS})`
+    );
+  }
 
   renditions.audio.forEach(audio => {
+    args.push('-map', `0:${audio.inputIndex}`);
+
+    if (audio.copy) {
+      args.push(`-c:a:${audio.outputIndex}`, 'copy');
+      return;
+    }
+
     args.push(
-      '-map', `0:${audio.inputIndex}`,
       `-c:a:${audio.outputIndex}`, 'aac',
-      `-b:a:${audio.outputIndex}`, AUDIO_BITRATE,
-      `-ac:a:${audio.outputIndex}`, '2'
+      `-b:a:${audio.outputIndex}`, getAacBitrateForChannels(audio.channels)
     );
   });
 
@@ -607,16 +700,31 @@ function hlsBoolean(value) {
 }
 
 function getAudioChannelsTag(channels) {
+  if (channels >= 8) return '8';
   if (channels >= 6) return '6';
+  if (channels > 0) return String(channels);
   return '2';
 }
 
-function getVariantBandwidth(video, hasAudio) {
-  return bitrateToBits(video.maxrate) + (hasAudio ? bitrateToBits(AUDIO_BITRATE) : 0);
+function getMaxAudioBandwidth(renditions) {
+  return renditions.audio.reduce((max, audio) => Math.max(max, audio.bitrate || 0), 0);
 }
 
-function getVariantAverageBandwidth(video, hasAudio) {
-  return video.averageBandwidth + (hasAudio ? bitrateToBits(AUDIO_BITRATE) : 0);
+function getVariantBandwidth(video, renditions) {
+  return bitrateToBits(video.maxrate) + getMaxAudioBandwidth(renditions);
+}
+
+function getVariantAverageBandwidth(video, renditions) {
+  return video.averageBandwidth + getMaxAudioBandwidth(renditions);
+}
+
+function getVariantCodecs(video, renditions) {
+  const codecs = [
+    video.codecs,
+    ...renditions.audio.map(audio => audio.codecString)
+  ].filter(Boolean);
+
+  return Array.from(new Set(codecs));
 }
 
 function writeMasterPlaylist(outputDir, renditions) {
@@ -659,14 +767,17 @@ function writeMasterPlaylist(outputDir, renditions) {
   });
 
   renditions.video.forEach(video => {
-    const codecs = hasAudio ? `${video.codecs},mp4a.40.2` : video.codecs;
+    const codecs = getVariantCodecs(video, renditions);
     const attributes = [
-      `BANDWIDTH=${getVariantBandwidth(video, hasAudio)}`,
-      `AVERAGE-BANDWIDTH=${getVariantAverageBandwidth(video, hasAudio)}`,
+      `BANDWIDTH=${getVariantBandwidth(video, renditions)}`,
+      `AVERAGE-BANDWIDTH=${getVariantAverageBandwidth(video, renditions)}`,
       `RESOLUTION=${video.width}x${video.height}`,
-      `FRAME-RATE=${video.frameRate}`,
-      `CODECS="${codecs}"`
+      `FRAME-RATE=${video.frameRate}`
     ];
+
+    if (codecs.length > 0) {
+      attributes.push(`CODECS="${codecs.join(',')}"`);
+    }
 
     if (hasAudio) {
       attributes.push(`AUDIO="${AUDIO_GROUP_ID}"`);
@@ -956,10 +1067,11 @@ async function replaceOutputDirectory(stagingDir, outputDir) {
 
 async function runTranscode(filename, filePath, outputDir, stagingDir, info, renditions) {
   const durationMs = Number(info.duration || 0) * 1000;
-  const acceleration = await getTranscodeAcceleration();
+  const copiesVideo = renditions.video.every(video => video.copy);
+  const acceleration = copiesVideo ? CPU_TRANSCODE_ACCELERATION : await getTranscodeAcceleration();
   const mediaArgs = buildMediaArgs(filePath, stagingDir, info, renditions, acceleration);
 
-  console.log(`[Transcode] Using ${acceleration.name === 'nvidia' ? 'NVIDIA NVENC' : 'CPU'} video encoder`);
+  console.log(`[Transcode] ${copiesVideo ? 'Copying source video without re-encoding' : `Using ${acceleration.name === 'nvidia' ? 'NVIDIA NVENC' : 'CPU'} video encoder`}`);
   console.log(`[Transcode] ffmpeg ${mediaArgs.join(' ')}`);
 
   await runFfmpeg(mediaArgs, text => {

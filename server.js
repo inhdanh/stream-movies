@@ -89,7 +89,8 @@ async function saveCoverImage(filename, imageBuffer, mimeType) {
     throw error;
   }
 
-  const ext = COVER_UPLOAD_TYPES.get(mimeType);
+  const normalizedMimeType = String(mimeType || '').split(';', 1)[0].trim().toLowerCase();
+  const ext = COVER_UPLOAD_TYPES.get(normalizedMimeType);
   if (!ext) {
     const error = new Error('Cover must be a JPEG, PNG, or WebP image');
     error.statusCode = 415;
@@ -113,8 +114,8 @@ async function saveCoverImage(filename, imageBuffer, mimeType) {
   fs.mkdirSync(outputDir, { recursive: true });
 
   const uploadId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const tempInput = path.join(outputDir, `.cover-upload-${uploadId}${ext}`);
-  const tempOutput = path.join(outputDir, `.cover-upload-${uploadId}.jpg`);
+  const tempInput = path.join(outputDir, `.cover-upload-${uploadId}.input${ext}`);
+  const tempOutput = path.join(outputDir, `.cover-upload-${uploadId}.output.jpg`);
   const coverPath = path.join(outputDir, COVER_IMAGE_NAME);
 
   try {

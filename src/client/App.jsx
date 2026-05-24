@@ -17,8 +17,6 @@ import {
   DialogContentText,
   DialogTitle,
   Divider,
-  FormControlLabel,
-  FormGroup,
   IconButton,
   LinearProgress,
   List,
@@ -66,7 +64,6 @@ import {
 
 const COVER_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const COVER_LIMIT_BYTES = 10 * 1024 * 1024;
-const TRANSCODE_RESOLUTIONS = ['2160p', '1080p', '720p', '480p', '360p'];
 
 function formatDuration(seconds) {
   if (!Number.isFinite(seconds)) return '--:--';
@@ -97,6 +94,16 @@ function getStatusIcon(movie, liveStatus) {
   if (liveStatus?.status === 'processing') return <ScheduleIcon />;
   if (liveStatus?.status === 'completed' || movie.isTranscoded) return <CheckCircleIcon />;
   return <MovieFilterIcon />;
+}
+
+function getSourceResolution(movie) {
+  const width = Number(movie?.sourceWidth);
+  const height = Number(movie?.sourceHeight);
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+    return null;
+  }
+
+  return { width, height };
 }
 
 function SectionCard({ title, action, children, sx }) {
@@ -422,13 +429,12 @@ function CoverUploader({ movie, onUploaded }) {
 function TranscodePanel({ movie, status, onStatus, onMovieReady }) {
   const [busy, setBusy] = useState(false);
   const [copyState, setCopyState] = useState('');
-  const [selectedResolutions, setSelectedResolutions] = useState(TRANSCODE_RESOLUTIONS);
 
+  const sourceResolution = useMemo(() => getSourceResolution(movie), [movie]);
   const progress = Number(status?.progress) || 0;
   const isProcessing = status?.status === 'processing';
   const isCompleted = status?.status === 'completed' || movie?.isTranscoded;
   const hasError = status?.status === 'error';
-  const canStart = selectedResolutions.length > 0;
 
   useEffect(() => {
     setCopyState('');
@@ -436,20 +442,10 @@ function TranscodePanel({ movie, status, onStatus, onMovieReady }) {
 
   if (!movie) return null;
 
-  function handleResolutionToggle(resolution) {
-    setSelectedResolutions(current => (
-      current.includes(resolution)
-        ? current.filter(item => item !== resolution)
-        : TRANSCODE_RESOLUTIONS.filter(item => item === resolution || current.includes(item))
-    ));
-  }
-
   async function handleStart() {
-    if (!canStart) return;
-
     setBusy(true);
     try {
-      await startTranscode(movie.path, selectedResolutions);
+      await startTranscode(movie.path);
       const nextStatus = await fetchTranscodeStatus(movie.path);
       onStatus(movie.path, nextStatus);
     } catch (error) {
@@ -485,34 +481,18 @@ function TranscodePanel({ movie, status, onStatus, onMovieReady }) {
     <Stack spacing={1.5}>
       <Box>
         <Typography color="text.secondary" sx={{ mb: 0.75 }} variant="caption">
-          Transcode resolutions
+          Output quality
         </Typography>
-        <FormGroup row sx={{ gap: 0.5 }}>
-          {TRANSCODE_RESOLUTIONS.map(resolution => (
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={selectedResolutions.includes(resolution)}
-                  disabled={busy || isProcessing || isCompleted}
-                  onChange={() => handleResolutionToggle(resolution)}
-                  size="small"
-                />
-              }
-              key={resolution}
-              label={resolution}
-              sx={{ mr: 1 }}
-            />
-          ))}
-        </FormGroup>
-        {!canStart && !isCompleted ? (
-          <Typography color="error.main" variant="caption">
-            Select at least one resolution.
+        {sourceResolution ? (
+          <Typography color="text.secondary" sx={{ display: 'block', mb: 0.5 }} variant="caption">
+            Source: {sourceResolution.width}x{sourceResolution.height}
           </Typography>
         ) : null}
+        <Chip label="Original source" size="small" variant="outlined" />
       </Box>
       <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
         <Button
-          disabled={busy || isProcessing || isCompleted || !canStart}
+          disabled={busy || isProcessing || isCompleted}
           onClick={handleStart}
           startIcon={busy || isProcessing ? <CircularProgress size={16} /> : <PlayArrowIcon />}
           variant="contained"

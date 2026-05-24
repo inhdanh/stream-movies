@@ -234,17 +234,31 @@ function renameHlsPath(hlsOutputDir, oldRelPath, newRelPath) {
   fs.renameSync(oldHlsPath, newHlsPath);
 }
 
-async function getDurationSeconds(filePath) {
+async function getMediaSummary(filePath) {
   return new Promise((resolve) => {
     ffmpeg.ffprobe(filePath, (err, metadata) => {
       if (err) {
-        console.warn(`[Media] Failed to read duration for ${filePath}: ${err.message}`);
-        resolve(null);
+        console.warn(`[Media] Failed to read media info for ${filePath}: ${err.message}`);
+        resolve({
+          durationSeconds: null,
+          sourceWidth: null,
+          sourceHeight: null
+        });
         return;
       }
 
       const duration = Number(metadata?.format?.duration);
-      resolve(Number.isFinite(duration) && duration >= 0 ? duration : null);
+      const video = (metadata?.streams || []).find(stream => (
+        stream.codec_type === 'video' && stream.disposition?.attached_pic !== 1
+      ));
+      const sourceWidth = Number(video?.width);
+      const sourceHeight = Number(video?.height);
+
+      resolve({
+        durationSeconds: Number.isFinite(duration) && duration >= 0 ? duration : null,
+        sourceWidth: Number.isFinite(sourceWidth) && sourceWidth > 0 ? sourceWidth : null,
+        sourceHeight: Number.isFinite(sourceHeight) && sourceHeight > 0 ? sourceHeight : null
+      });
     });
   });
 }
@@ -350,7 +364,7 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
               hasCover = fs.existsSync(movieCoverPath);
             }
           }
-          const durationSeconds = await getDurationSeconds(filePath);
+          const mediaSummary = await getMediaSummary(filePath);
           const baseMovie = {
             name, 
             path: relPath, 
@@ -358,7 +372,7 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
             isTranscoded,
             hasCover,
             coverBasePath,
-            durationSeconds
+            ...mediaSummary
           };
           const displayMetadata = getMovieDisplayMetadata(baseMovie, metadata, episodeIndex);
           episodeIndex++;
@@ -405,6 +419,9 @@ async function getMediaInfo(filePath) {
           index: stream.index,
           codec: stream.codec_name,
           codecProfile: stream.profile || '',
+          codecTag: stream.codec_tag_string || '',
+          level: stream.level,
+          bitRate: stream.bit_rate,
           language: language,
           languageCode: langCode,
           title,
