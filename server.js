@@ -5,20 +5,13 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 
 const { scanMovies, deleteMedia } = require('./src/media');
-const {
-  transcodeToHls,
-  getTranscodeStatus,
-  cleanupStaleTranscodeOutputs,
-  transcodeEvents
-} = require('./src/transcoder');
 const { saveProgress, getProgress } = require('./src/storage');
 const { updateMovieMetadata } = require('./src/metadata');
-const AutoTranscoder = require('./src/autoTranscoder');
 
 const app = express();
 const PORT = 3000;
 
-// The base directory for movies and HLS output
+// The base directory for movies and generated assets such as cover images.
 const MOVIES_DIR = 'D:/Movies';
 const HLS_OUTPUT_DIR = path.join(MOVIES_DIR, '.hls');
 const CLIENT_DIST_DIR = path.join(__dirname, 'dist');
@@ -30,7 +23,14 @@ const COVER_UPLOAD_TYPES = new Map([
   ['image/webp', '.webp']
 ]);
 
-const autoTranscoder = new AutoTranscoder(MOVIES_DIR, HLS_OUTPUT_DIR);
+const VIDEO_CONTENT_TYPES = new Map([
+  ['.mkv', 'video/x-matroska'],
+  ['.mp4', 'video/mp4'],
+  ['.m4v', 'video/mp4'],
+  ['.mov', 'video/quicktime'],
+  ['.avi', 'video/x-msvideo'],
+  ['.wmv', 'video/x-ms-wmv']
+]);
 
 function resolveMoviePath(filename) {
   const filePath = path.resolve(MOVIES_DIR, filename);
@@ -65,6 +65,63 @@ function movieRecordExists(filename) {
 
   const hlsPath = resolveHlsPath(filename);
   return Boolean(hlsPath && fs.existsSync(path.join(hlsPath, 'master.m3u8')));
+}
+
+function getVideoContentType(filePath) {
+  return VIDEO_CONTENT_TYPES.get(path.extname(filePath).toLowerCase()) || 'application/octet-stream';
+}
+
+function parseRangeHeader(rangeHeader, fileSize) {
+  if (!rangeHeader) return null;
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
+  if (!match) return 'invalid';
+
+  let start = match[1] ? Number.parseInt(match[1], 10) : null;
+  let end = match[2] ? Number.parseInt(match[2], 10) : null;
+
+  if (start === null && end === null) return 'invalid';
+  if (start === null) {
+    const suffixLength = end;
+    if (!Number.isFinite(suffixLength) || suffixLength <= 0) return 'invalid';
+    start = Math.max(fileSize - suffixLength, 0);
+    end = fileSize - 1;
+  } else {
+    if (!Number.isFinite(start) || start < 0) return 'invalid';
+    if (end === null || end >= fileSize) end = fileSize - 1;
+  }
+
+  if (!Number.isFinite(end) || start > end || start >= fileSize) return 'invalid';
+  return { start, end };
+}
+
+function sendMediaFile(req, res, filePath) {
+  const stats = fs.statSync(filePath);
+  const fileSize = stats.size;
+  const contentType = getVideoContentType(filePath);
+  const range = parseRangeHeader(req.headers.range, fileSize);
+
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Cache-Control', 'public, max-age=0');
+
+  if (range === 'invalid') {
+    res.setHeader('Content-Range', `bytes */${fileSize}`);
+    return res.status(416).end();
+  }
+
+  if (range) {
+    const { start, end } = range;
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+    res.setHeader('Content-Length', end - start + 1);
+    if (req.method === 'HEAD') return res.end();
+    return fs.createReadStream(filePath, { start, end }).pipe(res);
+  }
+
+  res.setHeader('Content-Length', fileSize);
+  if (req.method === 'HEAD') return res.end();
+  return fs.createReadStream(filePath).pipe(res);
 }
 
 function runFfmpeg(args) {
@@ -145,14 +202,10 @@ async function saveCoverImage(filename, imageBuffer, mimeType) {
   return coverBasePath;
 }
 
-// Ensure HLS output directory exists
+// Ensure generated asset directory exists
 if (!fs.existsSync(HLS_OUTPUT_DIR)) {
   fs.mkdirSync(HLS_OUTPUT_DIR, { recursive: true });
 }
-
-cleanupStaleTranscodeOutputs(HLS_OUTPUT_DIR).catch(error => {
-  console.warn(`[Server] Could not clean stale HLS staging outputs: ${error.message}`);
-});
 
 app.use(cors());
 app.use(express.json());
@@ -160,7 +213,7 @@ app.use(express.json());
 // 1. Get list of movies
 app.get('/movies', async (req, res) => {
   try {
-    const movies = await scanMovies(MOVIES_DIR, HLS_OUTPUT_DIR);
+    const movies = await scanMovies(MOVIES_DIR, HLS_OUTPUT_DIR, '', { includeHlsOnly: false });
     res.json({ movies });
   } catch (error) {
     console.error('Error scanning movies:', error);
@@ -189,26 +242,6 @@ app.put('/movies/:filename/metadata', (req, res) => {
   }
 });
 
-// 3. Start transcoding a movie to HLS
-app.post('/movies/:filename/transcode', async (req, res) => {
-  const filename = req.params.filename;
-  const filePath = resolveMoviePath(filename);
-  
-  if (!filePath || !fs.existsSync(filePath)) {
-    return res.status(404).json({ error: 'Movie not found' });
-  }
-
-  try {
-    const jobId = await transcodeToHls(filePath, MOVIES_DIR, HLS_OUTPUT_DIR, {
-      resolutions: req.body?.resolutions
-    });
-    res.json({ message: 'Transcoding started', jobId });
-  } catch (error) {
-    console.error('Error starting transcode:', error);
-    res.status(500).json({ error: 'Failed to start transcoding', details: error.message });
-  }
-});
-
 // 3b. Upload/replace movie cover image
 app.post(
   '/movies/:filename/cover',
@@ -229,13 +262,6 @@ app.post(
     }
   }
 );
-
-// 4. Get transcode status
-app.get('/movies/:filename/transcode/status', (req, res) => {
-  const filename = req.params.filename;
-  const status = getTranscodeStatus(filename, HLS_OUTPUT_DIR);
-  res.json(status);
-});
 
 // 5. Get playback progress
 app.get('/movies/:filename/progress', (req, res) => {
@@ -276,50 +302,29 @@ app.delete('/movies', async (req, res) => {
   }
 });
 
-// 7. Trigger auto-transcoding manually
-app.post('/movies/auto-transcode', async (req, res) => {
-  try {
-    autoTranscoder.scan(); // Start a scan and process queue
-    res.json({ message: 'Auto-transcoding scan started' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to start auto-transcoding' });
-  }
-});
-
-// 7. Trigger auto-transcoding manually
-
-// 5. Serve static HLS files
-// Example: /stream/movie.mkv/master.m3u8 -> serves D:/Movies/.hls/movie.mkv/master.m3u8
+// 5. Serve generated assets such as cover images.
 app.use('/stream', (req, res, next) => {
-  // Add CORS headers specifically for HLS streaming if needed
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   next();
 }, express.static(HLS_OUTPUT_DIR));
- 
- // SSE for real-time updates
- app.get('/events', (req, res) => {
-   res.setHeader('Content-Type', 'text/event-stream');
-   res.setHeader('Cache-Control', 'no-cache');
-   res.setHeader('Connection', 'keep-alive');
-   res.flushHeaders();
- 
-   const onProgress = (data) => {
-     res.write(`event: progress\ndata: ${JSON.stringify(data)}\n\n`);
-   };
- 
-   const onFinished = (data) => {
-     res.write(`event: finished\ndata: ${JSON.stringify(data)}\n\n`);
-   };
- 
-   transcodeEvents.on('progress', onProgress);
-   transcodeEvents.on('finished', onFinished);
- 
-   req.on('close', () => {
-     transcodeEvents.off('progress', onProgress);
-     transcodeEvents.off('finished', onFinished);
-   });
- });
+
+// 6. Serve original movie files directly with byte-range support.
+app.route('/media/:filename')
+  .get((req, res) => {
+    const filePath = resolveMoviePath(req.params.filename);
+    if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      return res.status(404).json({ error: 'Movie not found' });
+    }
+    return sendMediaFile(req, res, filePath);
+  })
+  .head((req, res) => {
+    const filePath = resolveMoviePath(req.params.filename);
+    if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      return res.status(404).end();
+    }
+    return sendMediaFile(req, res, filePath);
+  });
 
 // Serve the React CMS build after API and streaming routes.
 app.use(express.static(CLIENT_DIST_DIR));

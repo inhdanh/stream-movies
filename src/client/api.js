@@ -37,24 +37,6 @@ export async function uploadCover(path, file) {
   }).then(parseJsonResponse);
 }
 
-export async function startTranscode(path, resolutions) {
-  return fetch(`/movies/${encodeMoviePath(path)}/transcode`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(resolutions ? { resolutions } : {})
-  }).then(parseJsonResponse);
-}
-
-export async function fetchTranscodeStatus(path) {
-  return fetch(`/movies/${encodeMoviePath(path)}/transcode/status`).then(parseJsonResponse);
-}
-
-export async function startAutoTranscode() {
-  return fetch('/movies/auto-transcode', {
-    method: 'POST'
-  }).then(parseJsonResponse);
-}
-
 export async function deleteMovies(paths, deleteOriginal) {
   return fetch('/movies', {
     method: 'DELETE',
@@ -75,8 +57,8 @@ export async function saveProgress(path, seconds, duration) {
   }).then(parseJsonResponse);
 }
 
-export function getM3u8Url(path) {
-  return `${baseUrl}/stream/${encodeStreamPath(path)}/master.m3u8`;
+export function getMediaUrl(path) {
+  return `${baseUrl}/media/${encodeMoviePath(path)}`;
 }
 
 export function getCoverUrl(path) {
