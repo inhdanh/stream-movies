@@ -11,9 +11,9 @@ const { updateMovieMetadata } = require('./src/metadata');
 const app = express();
 const PORT = 3000;
 
-// The base directory for movies and generated assets such as cover images.
+// The base directory for movies and generated cover images.
 const MOVIES_DIR = 'D:/Movies';
-const HLS_OUTPUT_DIR = path.join(MOVIES_DIR, '.hls');
+const COVERS_DIR = path.join(MOVIES_DIR, 'covers');
 const CLIENT_DIST_DIR = path.join(__dirname, 'dist');
 const COVER_IMAGE_NAME = 'cover.jpg';
 const COVER_UPLOAD_LIMIT = '10mb';
@@ -43,15 +43,15 @@ function resolveMoviePath(filename) {
   return filePath;
 }
 
-function resolveHlsPath(filename) {
-  const hlsPath = path.resolve(HLS_OUTPUT_DIR, filename);
-  const hlsRoot = path.resolve(HLS_OUTPUT_DIR);
+function resolveCoverPath(filename) {
+  const coverPath = path.resolve(COVERS_DIR, filename);
+  const coversRoot = path.resolve(COVERS_DIR);
 
-  if (hlsPath !== hlsRoot && !hlsPath.startsWith(`${hlsRoot}${path.sep}`)) {
+  if (coverPath !== coversRoot && !coverPath.startsWith(`${coversRoot}${path.sep}`)) {
     return null;
   }
 
-  return hlsPath;
+  return coverPath;
 }
 
 function getCoverBasePath(filename) {
@@ -61,10 +61,15 @@ function getCoverBasePath(filename) {
 
 function movieRecordExists(filename) {
   const filePath = resolveMoviePath(filename);
-  if (filePath && fs.existsSync(filePath)) return true;
+  return Boolean(filePath && fs.existsSync(filePath));
+}
 
-  const hlsPath = resolveHlsPath(filename);
-  return Boolean(hlsPath && fs.existsSync(path.join(hlsPath, 'master.m3u8')));
+function getRouteFileParam(req) {
+  const value = req.params.filename ?? req.params[0];
+  if (Array.isArray(value)) {
+    return value.join('/');
+  }
+  return value;
 }
 
 function getVideoContentType(filePath) {
@@ -160,6 +165,10 @@ function getMediaUrl(relPath) {
   return `/media/${encodeURIComponent(relPath)}`;
 }
 
+function getCoverUrl(coverBasePath) {
+  return `/covers/${coverBasePath.split('/').map(encodeURIComponent).join('/')}/${COVER_IMAGE_NAME}`;
+}
+
 function serializeMovie(movie) {
   const filePath = resolveMoviePath(movie.path);
   const fallbackPaths = filePath
@@ -185,8 +194,7 @@ function serializeMovie(movie) {
     durationSeconds: movie.durationSeconds,
     sourceWidth: movie.sourceWidth,
     sourceHeight: movie.sourceHeight,
-    hasCover: movie.hasCover,
-    coverBasePath: movie.coverBasePath,
+    coverUrl: movie.coverBasePath ? getCoverUrl(movie.coverBasePath) : null,
     link: getMediaUrl(movie.path),
     fallbackLink
   };
@@ -343,7 +351,7 @@ async function saveCoverImage(filename, imageBuffer, mimeType) {
   }
 
   const coverBasePath = getCoverBasePath(filename);
-  const outputDir = resolveHlsPath(coverBasePath);
+  const outputDir = resolveCoverPath(coverBasePath);
   if (!outputDir) {
     const error = new Error('Invalid movie path');
     error.statusCode = 400;
@@ -377,9 +385,81 @@ async function saveCoverImage(filename, imageBuffer, mimeType) {
   return coverBasePath;
 }
 
-// Ensure generated asset directory exists
-if (!fs.existsSync(HLS_OUTPUT_DIR)) {
-  fs.mkdirSync(HLS_OUTPUT_DIR, { recursive: true });
+async function generateCoverImage(filename) {
+  if (!movieRecordExists(filename)) {
+    const error = new Error('Movie not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const filePath = resolveMoviePath(filename);
+  const inputPath = filePath && fs.existsSync(filePath) && fs.statSync(filePath).isFile()
+    ? filePath
+    : null;
+
+  if (!inputPath) {
+    const error = new Error('Movie source not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const coverBasePath = getCoverBasePath(filename);
+  const outputDir = resolveCoverPath(coverBasePath);
+  if (!outputDir) {
+    const error = new Error('Invalid movie path');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  let seekSeconds = 60;
+  try {
+    const info = await getMediaInfo(inputPath);
+    const duration = Number(info?.duration);
+    if (Number.isFinite(duration) && duration > 0) {
+      seekSeconds = duration > 16
+        ? Math.max(8, Math.min(duration * 0.2, duration - 8))
+        : Math.max(0, duration / 2);
+    }
+  } catch (error) {
+    console.warn(`[Cover] Failed to read duration for ${filename}: ${error.message}`);
+  }
+
+  const generationId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const tempOutput = path.join(outputDir, `.cover-generate-${generationId}.jpg`);
+  const coverPath = path.join(outputDir, COVER_IMAGE_NAME);
+  const buildFfmpegArgs = seconds => [
+    '-hide_banner',
+    '-y',
+    ...(seconds > 0 ? ['-ss', String(seconds)] : []),
+    '-i', inputPath,
+    '-map', '0:v:0',
+    '-frames:v', '1',
+    '-vf', "scale='min(1280,iw)':-2",
+    '-q:v', '2',
+    tempOutput
+  ];
+
+  try {
+    try {
+      await runFfmpeg(buildFfmpegArgs(seekSeconds));
+    } catch (error) {
+      if (seekSeconds <= 0) throw error;
+      fs.rmSync(tempOutput, { force: true });
+      await runFfmpeg(buildFfmpegArgs(0));
+    }
+    fs.renameSync(tempOutput, coverPath);
+  } finally {
+    fs.rmSync(tempOutput, { force: true });
+  }
+
+  return coverBasePath;
+}
+
+// Ensure generated asset directories exist
+if (!fs.existsSync(COVERS_DIR)) {
+  fs.mkdirSync(COVERS_DIR, { recursive: true });
 }
 
 app.use(cors());
@@ -388,7 +468,7 @@ app.use(express.json());
 // 1. Get list of movies
 app.get('/movies', async (req, res) => {
   try {
-    const movies = await scanMovies(MOVIES_DIR, HLS_OUTPUT_DIR, '', { includeHlsOnly: false });
+    const movies = await scanMovies(MOVIES_DIR, '', { coversDir: COVERS_DIR });
     res.json({ movies: movies.map(serializeMovie) });
   } catch (error) {
     console.error('Error scanning movies:', error);
@@ -397,8 +477,8 @@ app.get('/movies', async (req, res) => {
 });
 
 // 2. Save display metadata. Movies inside a folder share series metadata.
-app.put('/movies/:filename/metadata', (req, res) => {
-  const filename = req.params.filename;
+app.put(/^\/movies\/(.+)\/metadata$/, (req, res) => {
+  const filename = getRouteFileParam(req);
 
   if (!movieRecordExists(filename)) {
     return res.status(404).json({ error: 'Movie not found' });
@@ -418,8 +498,8 @@ app.put('/movies/:filename/metadata', (req, res) => {
 });
 
 // 3. Create a high-quality MP4 fallback by remuxing the original video stream.
-app.post('/movies/:filename/compatible-mp4', async (req, res) => {
-  const filename = req.params.filename;
+app.post(/^\/movies\/(.+)\/compatible-mp4$/, async (req, res) => {
+  const filename = getRouteFileParam(req);
 
   try {
     const result = await createCompatibleMp4(filename);
@@ -431,8 +511,8 @@ app.post('/movies/:filename/compatible-mp4', async (req, res) => {
 });
 
 // 3a. Create a full MKV remux that preserves video, audio, subtitles, chapters, and metadata.
-app.post('/movies/:filename/full-mkv', async (req, res) => {
-  const filename = req.params.filename;
+app.post(/^\/movies\/(.+)\/full-mkv$/, async (req, res) => {
+  const filename = getRouteFileParam(req);
 
   try {
     const result = await createFullMkvRemux(filename);
@@ -445,17 +525,16 @@ app.post('/movies/:filename/full-mkv', async (req, res) => {
 
 // 3b. Upload/replace movie cover image
 app.post(
-  '/movies/:filename/cover',
+  /^\/movies\/(.+)\/cover$/,
   express.raw({ type: Array.from(COVER_UPLOAD_TYPES.keys()), limit: COVER_UPLOAD_LIMIT }),
   async (req, res) => {
-    const filename = req.params.filename;
+    const filename = getRouteFileParam(req);
 
     try {
       const coverBasePath = await saveCoverImage(filename, req.body, req.get('content-type'));
       res.json({
         success: true,
-        coverBasePath,
-        coverUrl: `/stream/${coverBasePath.split('/').map(encodeURIComponent).join('/')}/${COVER_IMAGE_NAME}`
+        coverUrl: getCoverUrl(coverBasePath)
       });
     } catch (error) {
       console.error('Error uploading cover:', error);
@@ -464,16 +543,32 @@ app.post(
   }
 );
 
+// 3c. Generate/replace movie cover image from the current movie source.
+app.post(/^\/movies\/(.+)\/cover\/generate$/, async (req, res) => {
+  const filename = getRouteFileParam(req);
+
+  try {
+    const coverBasePath = await generateCoverImage(filename);
+    res.json({
+      success: true,
+      coverUrl: getCoverUrl(coverBasePath)
+    });
+  } catch (error) {
+    console.error('Error generating cover:', error);
+    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to generate cover image' });
+  }
+});
+
 // 5. Get playback progress
-app.get('/movies/:filename/progress', (req, res) => {
-  const filename = req.params.filename;
+app.get(/^\/movies\/(.+)\/progress$/, (req, res) => {
+  const filename = getRouteFileParam(req);
   const progress = getProgress(filename);
   res.json(progress);
 });
 
 // 6. Save playback progress
-app.post('/movies/:filename/progress', (req, res) => {
-  const filename = req.params.filename;
+app.post(/^\/movies\/(.+)\/progress$/, (req, res) => {
+  const filename = getRouteFileParam(req);
   const { seconds } = req.body;
   if (typeof seconds !== 'number') {
     return res.status(400).json({ error: 'Seconds must be a number' });
@@ -494,7 +589,7 @@ app.delete('/movies', async (req, res) => {
     for (const relPath of paths) {
       // Basic security check: prevent directory traversal
       const normalizedPath = path.normalize(relPath).replace(/^(\.\.(\/|\\|$))+/, '');
-      await deleteMedia(normalizedPath, MOVIES_DIR, HLS_OUTPUT_DIR, { deleteOriginal });
+      await deleteMedia(normalizedPath, MOVIES_DIR, { coversDir: COVERS_DIR, deleteOriginal });
     }
     res.json({ success: true, message: `Deleted ${paths.length} items` });
   } catch (error) {
@@ -503,24 +598,24 @@ app.delete('/movies', async (req, res) => {
   }
 });
 
-// 5. Serve generated assets such as cover images.
-app.use('/stream', (req, res, next) => {
+// 5. Serve generated cover images.
+app.use('/covers', (req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   next();
-}, express.static(HLS_OUTPUT_DIR));
+}, express.static(COVERS_DIR));
 
 // 6. Serve original movie files directly with byte-range support.
-app.route('/media/:filename')
+app.route(/^\/media\/(.+)$/)
   .get((req, res) => {
-    const filePath = resolveMoviePath(req.params.filename);
+    const filePath = resolveMoviePath(getRouteFileParam(req));
     if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
       return res.status(404).json({ error: 'Movie not found' });
     }
     return sendMediaFile(req, res, filePath);
   })
   .head((req, res) => {
-    const filePath = resolveMoviePath(req.params.filename);
+    const filePath = resolveMoviePath(getRouteFileParam(req));
     if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
       return res.status(404).end();
     }

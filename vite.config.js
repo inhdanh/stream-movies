@@ -8,7 +8,7 @@ module.exports = defineConfig({
     proxy: {
       '/movies': 'http://localhost:3000',
       '/media': 'http://localhost:3000',
-      '/stream': 'http://localhost:3000'
+      '/covers': 'http://localhost:3000'
     }
   },
   build: {

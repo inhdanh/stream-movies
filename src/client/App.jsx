@@ -38,6 +38,7 @@ import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlined';
 import FolderIcon from '@mui/icons-material/Folder';
+import ImageSearchIcon from '@mui/icons-material/ImageSearch';
 import LinkIcon from '@mui/icons-material/Link';
 import MovieFilterIcon from '@mui/icons-material/MovieFilter';
 import SaveIcon from '@mui/icons-material/Save';
@@ -48,7 +49,7 @@ import {
   deleteMovies,
   fetchMovies,
   fetchProgress,
-  getCoverUrl,
+  generateCover,
   saveMetadata,
   saveProgress,
   uploadCover
@@ -114,7 +115,7 @@ function SectionCard({ title, action, children, sx }) {
   );
 }
 
-function MovieThumb({ coverPath, version }) {
+function MovieThumb({ coverUrl, version }) {
   return (
     <Avatar
       variant="rounded"
@@ -129,11 +130,11 @@ function MovieThumb({ coverPath, version }) {
         width: 72
       }}
     >
-      {coverPath ? (
+      {coverUrl ? (
         <Box
           alt=""
           component="img"
-          src={`${getCoverUrl(coverPath)}?v=${version || 0}`}
+          src={`${coverUrl}?v=${version || 0}`}
           sx={{ height: '100%', objectFit: 'cover', width: '100%' }}
         />
       ) : (
@@ -175,7 +176,7 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
       {movies.map(movie => {
         const selected = selectedPath === movie.path;
         const checked = selectedPaths.has(movie.path);
-        const coverPath = movie.hasCover ? movie.coverBasePath || movie.path : null;
+        const coverUrl = movie.coverUrl || null;
 
         return (
           <ListItem
@@ -215,7 +216,7 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
                   size="small"
                 />
                 <ListItemAvatar sx={{ minWidth: 82 }}>
-                  <MovieThumb coverPath={coverPath} version={coverVersions[coverPath]} />
+                  <MovieThumb coverUrl={coverUrl} version={coverVersions[coverUrl]} />
                 </ListItemAvatar>
                 <ListItemText
                   primary={movie.displayName || movie.name}
@@ -339,6 +340,7 @@ function CoverUploader({ movie, onUploaded }) {
   const [status, setStatus] = useState('');
   const [statusType, setStatusType] = useState('info');
   const [uploading, setUploading] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
     setStatus('');
@@ -367,13 +369,30 @@ function CoverUploader({ movie, onUploaded }) {
       const result = await uploadCover(movie.path, file);
       setStatus('Cover updated.');
       setStatusType('success');
-      await onUploaded(movie.path, result.coverBasePath || movie.path);
+      await onUploaded(movie.path, result.coverUrl || null);
     } catch (error) {
       setStatus(error.message || 'Upload failed.');
       setStatusType('error');
     } finally {
       setUploading(false);
       if (inputRef.current) inputRef.current.value = '';
+    }
+  }
+
+  async function handleGenerate() {
+    setGenerating(true);
+    setStatus('Generating cover...');
+    setStatusType('info');
+    try {
+      const result = await generateCover(movie.path);
+      setStatus('Cover generated.');
+      setStatusType('success');
+      await onUploaded(movie.path, result.coverUrl || null);
+    } catch (error) {
+      setStatus(error.message || 'Generate cover failed.');
+      setStatusType('error');
+    } finally {
+      setGenerating(false);
     }
   }
 
@@ -388,7 +407,15 @@ function CoverUploader({ movie, onUploaded }) {
           type="file"
         />
         <Button
-          disabled={uploading}
+          disabled={uploading || generating || !movie.link}
+          onClick={handleGenerate}
+          startIcon={generating ? <CircularProgress size={16} /> : <ImageSearchIcon />}
+          variant="contained"
+        >
+          {generating ? 'Generating' : 'Generate Cover'}
+        </Button>
+        <Button
+          disabled={uploading || generating}
           onClick={() => inputRef.current?.click()}
           startIcon={uploading ? <CircularProgress size={16} /> : <CloudUploadIcon />}
           variant="outlined"
@@ -611,7 +638,7 @@ function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
     );
   }
 
-  const coverPath = movie.hasCover ? movie.coverBasePath || movie.path : null;
+  const coverUrl = movie.coverUrl || null;
   return (
     <SectionCard
       action={
@@ -653,11 +680,11 @@ function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
               overflow: 'hidden'
             }}
           >
-            {coverPath ? (
+            {coverUrl ? (
               <Box
                 alt=""
                 component="img"
-                src={`${getCoverUrl(coverPath)}?v=${coverVersions[coverPath] || 0}`}
+                src={`${coverUrl}?v=${coverVersions[coverUrl] || 0}`}
                 sx={{ height: '100%', objectFit: 'cover', width: '100%' }}
               />
             ) : (
@@ -796,12 +823,12 @@ export default function App() {
   }, []);
 
   const reloadMoviesAndBustCover = useCallback(
-    async (preferredPath, coverPath) => {
+    async (preferredPath, coverUrl) => {
       await loadMovies(preferredPath);
       setCoverVersions(current => ({
         ...current,
         [preferredPath]: Date.now(),
-        ...(coverPath ? { [coverPath]: Date.now() } : {})
+        ...(coverUrl ? { [coverUrl]: Date.now() } : {})
       }));
     },
     [loadMovies]

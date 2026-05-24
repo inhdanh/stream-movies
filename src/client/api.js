@@ -1,11 +1,5 @@
-export const baseUrl = window.location.origin;
-
 export function encodeMoviePath(path) {
   return encodeURIComponent(path);
-}
-
-export function encodeStreamPath(path) {
-  return path.split('/').map(encodeURIComponent).join('/');
 }
 
 async function parseJsonResponse(response) {
@@ -34,6 +28,12 @@ export async function uploadCover(path, file) {
     method: 'POST',
     headers: { 'Content-Type': file.type },
     body: file
+  }).then(parseJsonResponse);
+}
+
+export async function generateCover(path) {
+  return fetch(`/movies/${encodeMoviePath(path)}/cover/generate`, {
+    method: 'POST'
   }).then(parseJsonResponse);
 }
 
@@ -67,8 +67,4 @@ export async function saveProgress(path, seconds, duration) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ seconds, duration })
   }).then(parseJsonResponse);
-}
-
-export function getCoverUrl(path) {
-  return `${baseUrl}/stream/${encodeStreamPath(path)}/cover.jpg`;
 }
