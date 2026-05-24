@@ -263,6 +263,131 @@ async function getMediaSummary(filePath) {
   });
 }
 
+function getHlsCoverState(hlsOutputDir, relPath) {
+  let hasCover = false;
+  let coverBasePath = relPath;
+
+  if (!hlsOutputDir) {
+    return { hasCover, coverBasePath };
+  }
+
+  const folder = path.dirname(relPath).replace(/\\/g, '/');
+  const seriesCoverBasePath = folder && folder !== '.' ? folder : '';
+  const seriesCoverPath = seriesCoverBasePath
+    ? path.join(hlsOutputDir, seriesCoverBasePath, 'cover.jpg')
+    : null;
+  const movieCoverPath = path.join(hlsOutputDir, relPath, 'cover.jpg');
+
+  if (seriesCoverPath && fs.existsSync(seriesCoverPath)) {
+    hasCover = true;
+    coverBasePath = seriesCoverBasePath;
+  } else {
+    hasCover = fs.existsSync(movieCoverPath);
+  }
+
+  return { hasCover, coverBasePath };
+}
+
+function getHlsSummary(masterPath) {
+  try {
+    const master = fs.readFileSync(masterPath, 'utf8');
+    const resolutionMatch = master.match(/RESOLUTION=(\d+)x(\d+)/);
+    const sourceWidth = resolutionMatch ? Number(resolutionMatch[1]) : null;
+    const sourceHeight = resolutionMatch ? Number(resolutionMatch[2]) : null;
+
+    return {
+      durationSeconds: null,
+      sourceWidth: Number.isFinite(sourceWidth) && sourceWidth > 0 ? sourceWidth : null,
+      sourceHeight: Number.isFinite(sourceHeight) && sourceHeight > 0 ? sourceHeight : null
+    };
+  } catch (error) {
+    console.warn(`[Media] Failed to read HLS summary for ${masterPath}: ${error.message}`);
+    return {
+      durationSeconds: null,
+      sourceWidth: null,
+      sourceHeight: null
+    };
+  }
+}
+
+function isStagingHlsDir(name) {
+  return /\.tmp-\d+$/.test(name) || /\.copy-\d+$/.test(name);
+}
+
+async function scanHlsMoviePaths(hlsOutputDir, subDir = '') {
+  const currentPath = path.join(hlsOutputDir, subDir);
+
+  return new Promise((resolve, reject) => {
+    fs.readdir(currentPath, { withFileTypes: true }, async (err, entries) => {
+      if (err) {
+        if (err.code === 'ENOENT') return resolve([]);
+        return reject(err);
+      }
+
+      const masterPath = path.join(currentPath, 'master.m3u8');
+      if (fs.existsSync(masterPath)) {
+        return resolve([subDir.replace(/\\/g, '/')]);
+      }
+
+      entries.sort((a, b) => a.name.localeCompare(b.name, undefined, {
+        numeric: true,
+        sensitivity: 'base'
+      }));
+
+      let moviePaths = [];
+      for (const dirent of entries) {
+        if (!dirent.isDirectory() || dirent.name.startsWith('.') || isStagingHlsDir(dirent.name)) {
+          continue;
+        }
+
+        try {
+          const subPaths = await scanHlsMoviePaths(hlsOutputDir, path.join(subDir, dirent.name));
+          moviePaths = moviePaths.concat(subPaths);
+        } catch (error) {
+          console.error(`Error scanning HLS subdirectory ${dirent.name}:`, error);
+        }
+      }
+
+      resolve(moviePaths);
+    });
+  });
+}
+
+async function scanHlsOnlyMovies(hlsOutputDir, existingPaths, metadata, folderEpisodeCounts) {
+  if (!hlsOutputDir || !fs.existsSync(hlsOutputDir)) return [];
+
+  const hlsPaths = await scanHlsMoviePaths(hlsOutputDir);
+  const movies = [];
+
+  for (const relPath of hlsPaths) {
+    if (!relPath || existingPaths.has(relPath)) continue;
+
+    const folder = path.dirname(relPath).replace(/\\/g, '/');
+    const normalizedFolder = folder && folder !== '.' ? folder : '';
+    const name = path.basename(relPath);
+    const masterPath = path.join(hlsOutputDir, relPath, 'master.m3u8');
+    const baseMovie = {
+      name,
+      path: relPath,
+      folder: normalizedFolder,
+      isTranscoded: true,
+      ...getHlsCoverState(hlsOutputDir, relPath),
+      ...getHlsSummary(masterPath)
+    };
+    const episodeIndex = folderEpisodeCounts.get(normalizedFolder) || 0;
+    const displayMetadata = getMovieDisplayMetadata(baseMovie, metadata, episodeIndex);
+    folderEpisodeCounts.set(normalizedFolder, episodeIndex + 1);
+
+    movies.push({
+      ...baseMovie,
+      ...displayMetadata,
+      sourceMissing: true
+    });
+  }
+
+  return movies;
+}
+
 /**
  * Rename movie folders/files to URL-friendly names before scanning.
  */
@@ -328,6 +453,8 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
 
       let movies = [];
       let episodeIndex = 0;
+      const existingPaths = options.existingPaths || new Set();
+      const folderEpisodeCounts = options.folderEpisodeCounts || new Map();
       for (const dirent of files) {
         if (dirent.name.startsWith('.')) continue;
 
@@ -336,7 +463,10 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
             const subMovies = await scanMovies(dirPath, hlsOutputDir, path.join(subDir, dirent.name), {
               ...options,
               metadata,
-              normalizeNames: false
+              normalizeNames: false,
+              includeHlsOnly: false,
+              existingPaths,
+              folderEpisodeCounts
             });
             movies = movies.concat(subMovies);
           } catch (e) {
@@ -347,22 +477,11 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
           const relPath = path.join(subDir, name).replace(/\\/g, '/');
           const filePath = path.join(dirPath, subDir, name);
           let isTranscoded = false;
-          let hasCover = false;
-          let coverBasePath = relPath;
+          let coverState = { hasCover: false, coverBasePath: relPath };
           if (hlsOutputDir) {
             const masterPath = path.join(hlsOutputDir, relPath, 'master.m3u8');
-            const seriesCoverBasePath = subDir.replace(/\\/g, '/');
-            const seriesCoverPath = seriesCoverBasePath
-              ? path.join(hlsOutputDir, seriesCoverBasePath, 'cover.jpg')
-              : null;
-            const movieCoverPath = path.join(hlsOutputDir, relPath, 'cover.jpg');
             isTranscoded = fs.existsSync(masterPath);
-            if (seriesCoverPath && fs.existsSync(seriesCoverPath)) {
-              hasCover = true;
-              coverBasePath = seriesCoverBasePath;
-            } else {
-              hasCover = fs.existsSync(movieCoverPath);
-            }
+            coverState = getHlsCoverState(hlsOutputDir, relPath);
           }
           const mediaSummary = await getMediaSummary(filePath);
           const baseMovie = {
@@ -370,18 +489,28 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
             path: relPath, 
             folder: subDir.replace(/\\/g, '/'), 
             isTranscoded,
-            hasCover,
-            coverBasePath,
+            ...coverState,
             ...mediaSummary
           };
           const displayMetadata = getMovieDisplayMetadata(baseMovie, metadata, episodeIndex);
           episodeIndex++;
+          existingPaths.add(relPath);
+          folderEpisodeCounts.set(baseMovie.folder, episodeIndex);
 
           movies.push({
             ...baseMovie,
             ...displayMetadata
           });
         }
+      }
+      if (!subDir && options.includeHlsOnly !== false) {
+        const hlsOnlyMovies = await scanHlsOnlyMovies(
+          hlsOutputDir,
+          existingPaths,
+          metadata,
+          folderEpisodeCounts
+        );
+        movies = movies.concat(hlsOnlyMovies);
       }
       resolve(movies);
     });

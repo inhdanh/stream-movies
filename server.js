@@ -59,6 +59,14 @@ function getCoverBasePath(filename) {
   return folder && folder !== '.' ? folder : filename;
 }
 
+function movieRecordExists(filename) {
+  const filePath = resolveMoviePath(filename);
+  if (filePath && fs.existsSync(filePath)) return true;
+
+  const hlsPath = resolveHlsPath(filename);
+  return Boolean(hlsPath && fs.existsSync(path.join(hlsPath, 'master.m3u8')));
+}
+
 function runFfmpeg(args) {
   return new Promise((resolve, reject) => {
     const proc = spawn('ffmpeg', args);
@@ -82,8 +90,7 @@ function runFfmpeg(args) {
 }
 
 async function saveCoverImage(filename, imageBuffer, mimeType) {
-  const filePath = resolveMoviePath(filename);
-  if (!filePath || !fs.existsSync(filePath)) {
+  if (!movieRecordExists(filename)) {
     const error = new Error('Movie not found');
     error.statusCode = 404;
     throw error;
@@ -164,9 +171,8 @@ app.get('/movies', async (req, res) => {
 // 2. Save display metadata. Movies inside a folder share series metadata.
 app.put('/movies/:filename/metadata', (req, res) => {
   const filename = req.params.filename;
-  const filePath = resolveMoviePath(filename);
 
-  if (!filePath || !fs.existsSync(filePath)) {
+  if (!movieRecordExists(filename)) {
     return res.status(404).json({ error: 'Movie not found' });
   }
 
