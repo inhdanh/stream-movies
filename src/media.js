@@ -6,6 +6,12 @@ const { loadMetadata, getMovieDisplayMetadata } = require('./metadata');
 // Allowed video extensions
 const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.wmv'];
 const SAFE_FALLBACK_NAME = 'media';
+const GENERATED_VARIANT_SUFFIXES = [
+  '4khevcaac',
+  '4k_hevc_aac',
+  'remuxfull',
+  'remux_full'
+];
 
 const LANGUAGE_CODE_ALIASES = {
   chi: 'zh',
@@ -314,6 +320,14 @@ function isStagingHlsDir(name) {
   return /\.tmp-\d+$/.test(name) || /\.copy-\d+$/.test(name);
 }
 
+function isGeneratedVariantFile(name) {
+  const ext = path.extname(name).toLowerCase();
+  if (!VIDEO_EXTENSIONS.includes(ext)) return false;
+
+  const base = name.slice(0, -ext.length).toLowerCase();
+  return GENERATED_VARIANT_SUFFIXES.some(suffix => base.endsWith(suffix));
+}
+
 async function scanHlsMoviePaths(hlsOutputDir, subDir = '') {
   const currentPath = path.join(hlsOutputDir, subDir);
 
@@ -472,7 +486,11 @@ async function scanMovies(dirPath, hlsOutputDir, subDir = '', options = {}) {
           } catch (e) {
             console.error(`Error scanning subdirectory ${dirent.name}:`, e);
           }
-        } else if (dirent.isFile() && VIDEO_EXTENSIONS.includes(path.extname(dirent.name).toLowerCase())) {
+        } else if (
+          dirent.isFile() &&
+          VIDEO_EXTENSIONS.includes(path.extname(dirent.name).toLowerCase()) &&
+          !isGeneratedVariantFile(dirent.name)
+        ) {
           const name = dirent.name;
           const relPath = path.join(subDir, name).replace(/\\/g, '/');
           const filePath = path.join(dirPath, subDir, name);

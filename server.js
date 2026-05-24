@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 
-const { scanMovies, deleteMedia } = require('./src/media');
+const { getMediaInfo, scanMovies, deleteMedia } = require('./src/media');
 const { saveProgress, getProgress } = require('./src/storage');
 const { updateMovieMetadata } = require('./src/metadata');
 
@@ -146,6 +146,181 @@ function runFfmpeg(args) {
   });
 }
 
+function getCompatibleMp4OutputPath(filePath) {
+  const parsed = path.parse(filePath);
+  return path.join(parsed.dir, `${parsed.name}4khevcaac.mp4`);
+}
+
+function getFullMkvOutputPath(filePath) {
+  const parsed = path.parse(filePath);
+  return path.join(parsed.dir, `${parsed.name}remuxfull.mkv`);
+}
+
+function getMediaUrl(relPath) {
+  return `/media/${encodeURIComponent(relPath)}`;
+}
+
+function serializeMovie(movie) {
+  const filePath = resolveMoviePath(movie.path);
+  const fallbackPaths = filePath
+    ? [getCompatibleMp4OutputPath(filePath), getFullMkvOutputPath(filePath)]
+        .map(candidatePath => path.relative(MOVIES_DIR, candidatePath).replace(/\\/g, '/'))
+    : [];
+  const fallbackPath = fallbackPaths.find(candidatePath => {
+    const candidateFilePath = resolveMoviePath(candidatePath);
+    return candidateFilePath && fs.existsSync(candidateFilePath);
+  });
+  const fallbackLink = fallbackPath ? getMediaUrl(fallbackPath) : null;
+
+  return {
+    name: movie.name,
+    path: movie.path,
+    folder: movie.folder,
+    displayName: movie.displayName,
+    title: movie.title,
+    metadataScope: movie.metadataScope,
+    metadataKey: movie.metadataKey,
+    episodeStart: movie.episodeStart,
+    episodeNumber: movie.episodeNumber,
+    durationSeconds: movie.durationSeconds,
+    sourceWidth: movie.sourceWidth,
+    sourceHeight: movie.sourceHeight,
+    hasCover: movie.hasCover,
+    coverBasePath: movie.coverBasePath,
+    link: getMediaUrl(movie.path),
+    fallbackLink
+  };
+}
+
+function getAudioCompatibilityPlan(mediaInfo) {
+  const audioStreams = mediaInfo.audio || [];
+  const aacStream = audioStreams.find(stream => String(stream.codec).toLowerCase() === 'aac');
+  if (aacStream) {
+    return { stream: aacStream, codecArgs: ['-c:a', 'copy'], copied: true };
+  }
+
+  const dolbyStream = audioStreams.find(stream => ['eac3', 'ac3'].includes(String(stream.codec).toLowerCase()));
+  if (dolbyStream) {
+    return { stream: dolbyStream, codecArgs: ['-c:a', 'copy'], copied: true };
+  }
+
+  const fallbackStream = audioStreams[0];
+  if (fallbackStream) {
+    return { stream: fallbackStream, codecArgs: ['-c:a', 'aac', '-b:a', '192k'], copied: false };
+  }
+
+  return null;
+}
+
+async function createCompatibleMp4(filename) {
+  const filePath = resolveMoviePath(filename);
+  if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    const error = new Error('Movie not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const outputPath = getCompatibleMp4OutputPath(filePath);
+  if (path.resolve(filePath) === path.resolve(outputPath)) {
+    const error = new Error('Source file is already the target MP4 path');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const outputRelPath = path.relative(MOVIES_DIR, outputPath).replace(/\\/g, '/');
+  if (fs.existsSync(outputPath)) {
+    return { alreadyExists: true, path: outputRelPath };
+  }
+
+  const mediaInfo = await getMediaInfo(filePath);
+  if (!mediaInfo.video?.length) {
+    const error = new Error('No video stream found');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const audioPlan = getAudioCompatibilityPlan(mediaInfo);
+  const tempOutput = path.join(path.dirname(outputPath), `.${path.basename(outputPath)}.tmp-${Date.now()}.mp4`);
+  const args = [
+    '-hide_banner',
+    '-y',
+    '-i', filePath,
+    '-map', '0:v:0'
+  ];
+
+  if (audioPlan) {
+    args.push('-map', `0:${audioPlan.stream.index}`);
+  }
+
+  args.push(
+    '-sn',
+    '-dn',
+    '-map_metadata', '0',
+    '-c:v', 'copy',
+    '-tag:v', 'hvc1',
+    ...(audioPlan ? audioPlan.codecArgs : []),
+    '-movflags', '+faststart',
+    tempOutput
+  );
+
+  try {
+    await runFfmpeg(args);
+    fs.renameSync(tempOutput, outputPath);
+  } finally {
+    fs.rmSync(tempOutput, { force: true });
+  }
+
+  return {
+    alreadyExists: false,
+    audioCopied: Boolean(audioPlan?.copied),
+    path: outputRelPath
+  };
+}
+
+async function createFullMkvRemux(filename) {
+  const filePath = resolveMoviePath(filename);
+  if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    const error = new Error('Movie not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const outputPath = getFullMkvOutputPath(filePath);
+  if (path.resolve(filePath) === path.resolve(outputPath)) {
+    const error = new Error('Source file is already the target MKV path');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const outputRelPath = path.relative(MOVIES_DIR, outputPath).replace(/\\/g, '/');
+  if (fs.existsSync(outputPath)) {
+    return { alreadyExists: true, path: outputRelPath };
+  }
+
+  const tempOutput = path.join(path.dirname(outputPath), `.${path.basename(outputPath)}.tmp-${Date.now()}.mkv`);
+
+  try {
+    await runFfmpeg([
+      '-hide_banner',
+      '-y',
+      '-i', filePath,
+      '-map', '0',
+      '-map_metadata', '0',
+      '-map_chapters', '0',
+      '-c', 'copy',
+      tempOutput
+    ]);
+    fs.renameSync(tempOutput, outputPath);
+  } finally {
+    fs.rmSync(tempOutput, { force: true });
+  }
+
+  return {
+    alreadyExists: false,
+    path: outputRelPath
+  };
+}
+
 async function saveCoverImage(filename, imageBuffer, mimeType) {
   if (!movieRecordExists(filename)) {
     const error = new Error('Movie not found');
@@ -214,7 +389,7 @@ app.use(express.json());
 app.get('/movies', async (req, res) => {
   try {
     const movies = await scanMovies(MOVIES_DIR, HLS_OUTPUT_DIR, '', { includeHlsOnly: false });
-    res.json({ movies });
+    res.json({ movies: movies.map(serializeMovie) });
   } catch (error) {
     console.error('Error scanning movies:', error);
     res.status(500).json({ error: 'Failed to scan movies directory' });
@@ -239,6 +414,32 @@ app.put('/movies/:filename/metadata', (req, res) => {
   } catch (error) {
     console.error('Error saving movie metadata:', error);
     res.status(error.statusCode || 500).json({ error: error.message || 'Failed to save movie metadata' });
+  }
+});
+
+// 3. Create a high-quality MP4 fallback by remuxing the original video stream.
+app.post('/movies/:filename/compatible-mp4', async (req, res) => {
+  const filename = req.params.filename;
+
+  try {
+    const result = await createCompatibleMp4(filename);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error creating compatible MP4:', error);
+    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to create compatible MP4' });
+  }
+});
+
+// 3a. Create a full MKV remux that preserves video, audio, subtitles, chapters, and metadata.
+app.post('/movies/:filename/full-mkv', async (req, res) => {
+  const filename = req.params.filename;
+
+  try {
+    const result = await createFullMkvRemux(filename);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error creating full MKV remux:', error);
+    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to create full MKV remux' });
   }
 });
 

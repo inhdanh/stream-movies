@@ -37,6 +37,18 @@ export async function uploadCover(path, file) {
   }).then(parseJsonResponse);
 }
 
+export async function createCompatibleMp4(path) {
+  return fetch(`/movies/${encodeMoviePath(path)}/compatible-mp4`, {
+    method: 'POST'
+  }).then(parseJsonResponse);
+}
+
+export async function createFullMkv(path) {
+  return fetch(`/movies/${encodeMoviePath(path)}/full-mkv`, {
+    method: 'POST'
+  }).then(parseJsonResponse);
+}
+
 export async function deleteMovies(paths, deleteOriginal) {
   return fetch('/movies', {
     method: 'DELETE',
@@ -55,10 +67,6 @@ export async function saveProgress(path, seconds, duration) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ seconds, duration })
   }).then(parseJsonResponse);
-}
-
-export function getMediaUrl(path) {
-  return `${baseUrl}/media/${encodeMoviePath(path)}`;
 }
 
 export function getCoverUrl(path) {

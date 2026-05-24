@@ -43,11 +43,12 @@ import MovieFilterIcon from '@mui/icons-material/MovieFilter';
 import SaveIcon from '@mui/icons-material/Save';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import {
+  createCompatibleMp4,
+  createFullMkv,
   deleteMovies,
   fetchMovies,
   fetchProgress,
   getCoverUrl,
-  getMediaUrl,
   saveMetadata,
   saveProgress,
   uploadCover
@@ -67,15 +68,15 @@ function formatDuration(seconds) {
 }
 
 function getStatusLabel(movie) {
-  return movie.sourceMissing ? 'MISSING' : 'DIRECT';
+  return movie.link ? 'DIRECT' : 'MISSING';
 }
 
 function getStatusColor(movie) {
-  return movie.sourceMissing ? 'error' : 'success';
+  return movie.link ? 'success' : 'error';
 }
 
 function getStatusIcon(movie) {
-  return movie.sourceMissing ? <ErrorOutlineIcon /> : <CheckCircleIcon />;
+  return movie.link ? <CheckCircleIcon /> : <ErrorOutlineIcon />;
 }
 
 function getSourceResolution(movie) {
@@ -407,19 +408,25 @@ function CoverUploader({ movie, onUploaded }) {
   );
 }
 
-function DirectPlaybackPanel({ movie }) {
+function DirectPlaybackPanel({ movie, onCompatibleCreated }) {
   const [copyState, setCopyState] = useState('');
+  const [mp4State, setMp4State] = useState('');
+  const [mp4StateType, setMp4StateType] = useState('info');
+  const [creatingMp4, setCreatingMp4] = useState(false);
+  const [creatingFullMkv, setCreatingFullMkv] = useState(false);
 
   const sourceResolution = useMemo(() => getSourceResolution(movie), [movie]);
 
   useEffect(() => {
     setCopyState('');
+    setMp4State('');
+    setMp4StateType('info');
   }, [movie?.path]);
 
   if (!movie) return null;
 
   async function handleCopy() {
-    const url = getMediaUrl(movie.path);
+    const url = movie.link;
     try {
       if (navigator.clipboard && window.isSecureContext) {
         await navigator.clipboard.writeText(url);
@@ -440,6 +447,42 @@ function DirectPlaybackPanel({ movie }) {
     }
   }
 
+  async function handleCreateCompatibleMp4() {
+    setCreatingMp4(true);
+    setMp4State('Creating MP4. This may take a while for large files...');
+    setMp4StateType('info');
+
+    try {
+      const result = await createCompatibleMp4(movie.path);
+      setMp4State(result.alreadyExists ? 'Compatible MP4 already exists.' : 'Compatible MP4 created.');
+      setMp4StateType('success');
+      await onCompatibleCreated(movie.path);
+    } catch (error) {
+      setMp4State(error.message || 'Create MP4 failed.');
+      setMp4StateType('error');
+    } finally {
+      setCreatingMp4(false);
+    }
+  }
+
+  async function handleCreateFullMkv() {
+    setCreatingFullMkv(true);
+    setMp4State('Creating full MKV remux...');
+    setMp4StateType('info');
+
+    try {
+      const result = await createFullMkv(movie.path);
+      setMp4State(result.alreadyExists ? 'Full MKV remux already exists.' : 'Full MKV remux created.');
+      setMp4StateType('success');
+      await onCompatibleCreated(movie.path);
+    } catch (error) {
+      setMp4State(error.message || 'Create full MKV failed.');
+      setMp4StateType('error');
+    } finally {
+      setCreatingFullMkv(false);
+    }
+  }
+
   return (
     <Stack spacing={1.5}>
       <Box>
@@ -457,10 +500,31 @@ function DirectPlaybackPanel({ movie }) {
         <Button onClick={handleCopy} startIcon={<ContentCopyIcon />} variant="outlined">
           Copy Direct URL
         </Button>
+        <Button
+          disabled={creatingMp4 || creatingFullMkv || !movie.link}
+          onClick={handleCreateCompatibleMp4}
+          startIcon={creatingMp4 ? <CircularProgress size={16} /> : <VideoLibraryIcon />}
+          variant="contained"
+        >
+          {creatingMp4 ? 'Creating MP4' : 'Create Compatible MP4'}
+        </Button>
+        <Button
+          disabled={creatingMp4 || creatingFullMkv || !movie.link}
+          onClick={handleCreateFullMkv}
+          startIcon={creatingFullMkv ? <CircularProgress size={16} /> : <VideoLibraryIcon />}
+          variant="outlined"
+        >
+          {creatingFullMkv ? 'Creating MKV' : 'Create Full MKV'}
+        </Button>
       </Stack>
       {copyState ? (
         <Alert severity={copyState === 'Copied.' ? 'success' : 'error'} variant="outlined">
           {copyState}
+        </Alert>
+      ) : null}
+      {mp4State ? (
+        <Alert severity={mp4StateType} variant="outlined">
+          {mp4State}
         </Alert>
       ) : null}
     </Stack>
@@ -475,7 +539,7 @@ function Player({ movie, active }) {
     const video = videoRef.current;
     if (!movie || !active || !video) return undefined;
 
-    const source = getMediaUrl(movie.path);
+    const source = movie.link;
     let disposed = false;
 
     async function restoreProgress() {
@@ -605,7 +669,7 @@ function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
           <Divider />
           <MetadataEditor movie={movie} onSaved={onReload} />
           <Divider />
-          <DirectPlaybackPanel movie={movie} />
+          <DirectPlaybackPanel movie={movie} onCompatibleCreated={onReload} />
           <Divider />
           <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
             <Button color="error" onClick={() => onDeleteRequest([movie.path], false)} startIcon={<DeleteOutlineIcon />} variant="outlined">
@@ -628,9 +692,26 @@ function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
           >
             <LinkIcon color="primary" fontSize="small" />
             <Typography color="text.secondary" noWrap variant="caption">
-              {getMediaUrl(movie.path)}
+              {movie.link}
             </Typography>
           </Paper>
+          {movie.fallbackLink ? (
+            <Paper
+              variant="outlined"
+              sx={{
+                alignItems: 'center',
+                display: 'flex',
+                gap: 1,
+                minWidth: 0,
+                p: 1.25
+              }}
+            >
+              <LinkIcon color="secondary" fontSize="small" />
+              <Typography color="text.secondary" noWrap variant="caption">
+                {movie.fallbackLink}
+              </Typography>
+            </Paper>
+          ) : null}
         </Stack>
       </CardContent>
     </SectionCard>
@@ -761,7 +842,7 @@ export default function App() {
     }
   }
 
-  const readyForPlayer = selectedMovie && !selectedMovie.sourceMissing;
+  const readyForPlayer = Boolean(selectedMovie?.link);
   const deleteLabel = pendingDelete?.deleteOriginal ? 'movie files and generated assets' : 'generated assets';
 
   return (
@@ -821,7 +902,7 @@ export default function App() {
               <Chip label={`${movies.length} items`} size="small" variant="outlined" />
               <Chip
                 color="success"
-                label={`${movies.filter(movie => !movie.sourceMissing).length} playable`}
+                label={`${movies.filter(movie => movie.link).length} playable`}
                 size="small"
                 variant="outlined"
               />
