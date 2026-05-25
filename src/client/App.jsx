@@ -27,10 +27,13 @@ import {
   Skeleton,
   Snackbar,
   Stack,
+  Tab,
+  Tabs,
   TextField,
   Toolbar,
   Tooltip,
-  Typography
+  Typography,
+  useMediaQuery
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
@@ -103,7 +106,7 @@ function SectionCard({ title, action, children, sx }) {
           display: 'flex',
           justifyContent: 'space-between',
           minHeight: 48,
-          px: 2
+          px: { sm: 2, xs: 1.5 }
         }}
       >
         <Typography variant="subtitle2" sx={{ fontWeight: 800, letterSpacing: 0.2 }}>
@@ -127,8 +130,8 @@ function MovieThumb({ coverUrl, generating, version }) {
         color: 'primary.light',
         fontSize: 11,
         fontWeight: 900,
-        height: 46,
-        width: 72
+        height: { sm: 46, xs: 40 },
+        width: { sm: 72, xs: 62 }
       }}
     >
       {generating ? (
@@ -175,7 +178,7 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
   }
 
   return (
-    <List disablePadding sx={{ maxHeight: { md: 642, xs: 520 }, overflowY: 'auto', p: 1 }}>
+    <List disablePadding sx={{ maxHeight: { lg: 642, xs: 'calc(100vh - 268px)' }, minHeight: { xs: 360, sm: 460 }, overflowY: 'auto', p: { sm: 1, xs: 0.75 } }}>
       {movies.map(movie => {
         const selected = selectedPath === movie.path;
         const checked = selectedPaths.has(movie.path);
@@ -185,16 +188,6 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
           <ListItem
             disablePadding
             key={movie.path}
-            secondaryAction={
-              <Chip
-                color={getStatusColor(movie)}
-                icon={getStatusIcon(movie)}
-                label={getStatusLabel(movie)}
-                size="small"
-                sx={{ minWidth: 78 }}
-                variant="filled"
-              />
-            }
             sx={{ mb: 0.75 }}
           >
             <Paper
@@ -206,7 +199,17 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
                 width: '100%'
               }}
             >
-              <ListItemButton onClick={() => onSelect(movie.path)} selected={selected} sx={{ gap: 1, pr: 11 }}>
+              <ListItemButton
+                onClick={() => onSelect(movie.path)}
+                selected={selected}
+                sx={{
+                  alignItems: 'center',
+                  display: 'grid',
+                  gap: { sm: 1, xs: 0.75 },
+                  gridTemplateColumns: { sm: 'auto 82px minmax(0, 1fr) auto', xs: 'auto 64px minmax(0, 1fr)' },
+                  p: { sm: 1.25, xs: 1 }
+                }}
+              >
                 <Checkbox
                   checked={checked}
                   edge="start"
@@ -217,15 +220,17 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
                   }}
                   onClick={event => event.stopPropagation()}
                   size="small"
+                  sx={{ p: { sm: 1, xs: 0.5 } }}
                 />
-                <ListItemAvatar sx={{ minWidth: 82 }}>
+                <ListItemAvatar sx={{ minWidth: { sm: 82, xs: 64 } }}>
                   <MovieThumb coverUrl={coverUrl} generating={movie.coverGenerating} version={coverVersions[coverUrl]} />
                 </ListItemAvatar>
                 <ListItemText
                   primary={movie.displayName || movie.name}
                   primaryTypographyProps={{ fontWeight: 800, noWrap: true, variant: 'body2' }}
+                  sx={{ minWidth: 0, my: 0 }}
                   secondary={
-                    <Stack direction="row" spacing={1.25} sx={{ minWidth: 0 }}>
+                    <Stack direction="row" spacing={1.25} sx={{ flexWrap: 'wrap', minWidth: 0, rowGap: 0 }}>
                       <Typography color="text.secondary" noWrap variant="caption">
                         {movie.folder || 'Root'}
                       </Typography>
@@ -239,6 +244,19 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
                       ) : null}
                     </Stack>
                   }
+                />
+                <Chip
+                  color={getStatusColor(movie)}
+                  icon={getStatusIcon(movie)}
+                  label={getStatusLabel(movie)}
+                  size="small"
+                  sx={{
+                    gridColumn: { sm: 'auto', xs: '2 / -1' },
+                    justifySelf: { sm: 'end', xs: 'start' },
+                    minWidth: 78,
+                    mt: { sm: 0, xs: 0.25 }
+                  }}
+                  variant="filled"
                 />
               </ListItemButton>
             </Paper>
@@ -330,7 +348,7 @@ function MetadataEditor({ movie, onSaved }) {
             value={episodeStart}
           />
         ) : null}
-        <Button disabled={saving} onClick={handleSave} startIcon={saving ? <CircularProgress size={16} /> : <SaveIcon />} variant="contained">
+        <Button disabled={saving} onClick={handleSave} startIcon={saving ? <CircularProgress size={16} /> : <SaveIcon />} sx={{ width: { sm: 'auto', xs: '100%' } }} variant="contained">
           {saving ? 'Saving' : 'Save'}
         </Button>
       </Box>
@@ -406,7 +424,7 @@ function CoverUploader({ movie, onUploaded }) {
 
   return (
     <Stack spacing={1}>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+      <Stack direction={{ sm: 'row', xs: 'column' }} spacing={1} sx={{ alignItems: { sm: 'center', xs: 'stretch' } }}>
         <input
           accept={COVER_TYPES.join(',')}
           hidden
@@ -418,6 +436,7 @@ function CoverUploader({ movie, onUploaded }) {
           disabled={uploading || generating || !movie.link}
           onClick={handleGenerate}
           startIcon={generating ? <CircularProgress size={16} /> : <ImageSearchIcon />}
+          sx={{ width: { sm: 'auto', xs: '100%' } }}
           variant="contained"
         >
           {generating ? 'Generating' : 'Generate Cover'}
@@ -426,11 +445,12 @@ function CoverUploader({ movie, onUploaded }) {
           disabled={uploading || generating}
           onClick={() => inputRef.current?.click()}
           startIcon={uploading ? <CircularProgress size={16} /> : <CloudUploadIcon />}
+          sx={{ width: { sm: 'auto', xs: '100%' } }}
           variant="outlined"
         >
           {uploading ? 'Uploading' : 'Upload Cover'}
         </Button>
-        <Typography color="text.secondary" variant="caption">
+        <Typography color="text.secondary" sx={{ px: { sm: 0, xs: 0.25 } }} variant="caption">
           JPEG, PNG, WebP up to 10MB
         </Typography>
       </Stack>
@@ -568,14 +588,15 @@ function DirectPlaybackPanel({ movie, onCompatibleCreated }) {
         ) : null}
         <Chip label="Original file" size="small" variant="outlined" />
       </Box>
-      <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
-        <Button onClick={handleCopy} startIcon={<ContentCopyIcon />} variant="outlined">
+      <Stack direction={{ sm: 'row', xs: 'column' }} spacing={1} sx={{ alignItems: { sm: 'center', xs: 'stretch' } }}>
+        <Button onClick={handleCopy} startIcon={<ContentCopyIcon />} sx={{ width: { sm: 'auto', xs: '100%' } }} variant="outlined">
           Copy Direct URL
         </Button>
         <Button
           disabled={aacBusy || startingAac || !movie.link}
           onClick={handleStartAacTranscode}
           startIcon={(startingAac || aacBusy) ? <CircularProgress size={16} /> : <VideoLibraryIcon />}
+          sx={{ width: { sm: 'auto', xs: '100%' } }}
           variant="outlined"
         >
           {aacBusy ? `AAC ${aacProgress}%` : 'Transcode AAC'}
@@ -583,7 +604,7 @@ function DirectPlaybackPanel({ movie, onCompatibleCreated }) {
       </Stack>
       {aacJob && aacJob.status !== 'idle' ? (
         <Box>
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.75 }}>
+          <Stack direction={{ sm: 'row', xs: 'column' }} spacing={{ sm: 1, xs: 0 }} sx={{ alignItems: { sm: 'center', xs: 'flex-start' }, mb: 0.75 }}>
             <Typography color="text.secondary" variant="caption">
               AAC transcode: {aacJob.status}
             </Typography>
@@ -688,10 +709,10 @@ function Player({ movie, active }) {
 function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
   if (!movie) {
     return (
-      <SectionCard title="Episode Details" sx={{ minHeight: { md: 642, xs: 360 } }}>
-        <Box sx={{ display: 'grid', minHeight: 560, placeItems: 'center', px: 4, textAlign: 'center' }}>
+      <SectionCard title="Episode Details" sx={{ minHeight: { lg: 642, xs: 320 } }}>
+        <Box sx={{ display: 'grid', minHeight: { lg: 560, xs: 300 }, placeItems: 'center', px: { sm: 4, xs: 2 }, textAlign: 'center' }}>
           <Stack spacing={1.5} sx={{ alignItems: 'center' }}>
-            <Avatar sx={{ bgcolor: 'action.selected', color: 'text.secondary', height: 76, width: 76 }}>
+            <Avatar sx={{ bgcolor: 'action.selected', color: 'text.secondary', height: { sm: 76, xs: 62 }, width: { sm: 76, xs: 62 } }}>
               <MovieFilterIcon fontSize="large" />
             </Avatar>
             <Typography variant="h6">Select a movie</Typography>
@@ -717,13 +738,13 @@ function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
         />
       }
       title="Episode Details"
-      sx={{ minHeight: { md: 642, xs: 0 } }}
+      sx={{ minHeight: { lg: 642, xs: 0 } }}
     >
-      <CardContent>
+      <CardContent sx={{ p: { sm: 2, xs: 1.5 }, '&:last-child': { pb: { sm: 2, xs: 1.5 } } }}>
         <Stack spacing={2}>
           <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
             <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ overflowWrap: 'anywhere' }} variant="h5">
+              <Typography sx={{ fontSize: { sm: '1.2rem', xs: '1.05rem' }, overflowWrap: 'anywhere' }} variant="h5">
                 {movie.displayName || movie.name}
               </Typography>
               <Typography color="text.secondary" sx={{ mt: 0.5, overflowWrap: 'anywhere' }} variant="caption">
@@ -735,7 +756,7 @@ function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
           <Box
             sx={{
               alignItems: 'center',
-              aspectRatio: '16 / 6.3',
+              aspectRatio: { sm: '16 / 6.3', xs: '16 / 8.5' },
               bgcolor: 'grey.950',
               border: 1,
               borderColor: 'divider',
@@ -769,11 +790,11 @@ function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
           <Divider />
           <DirectPlaybackPanel movie={movie} onCompatibleCreated={onReload} />
           <Divider />
-          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
-            <Button color="error" onClick={() => onDeleteRequest([movie.path], false)} startIcon={<DeleteOutlineIcon />} variant="outlined">
+          <Stack direction={{ sm: 'row', xs: 'column' }} spacing={1} sx={{ alignItems: { sm: 'center', xs: 'stretch' } }}>
+            <Button color="error" onClick={() => onDeleteRequest([movie.path], false)} startIcon={<DeleteOutlineIcon />} sx={{ width: { sm: 'auto', xs: '100%' } }} variant="outlined">
               Delete Generated Assets
             </Button>
-            <Button color="error" onClick={() => onDeleteRequest([movie.path], true)} startIcon={<DeleteForeverIcon />} variant="contained">
+            <Button color="error" onClick={() => onDeleteRequest([movie.path], true)} startIcon={<DeleteForeverIcon />} sx={{ width: { sm: 'auto', xs: '100%' } }} variant="contained">
               Delete Movie File
             </Button>
           </Stack>
@@ -789,7 +810,7 @@ function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
             }}
           >
             <LinkIcon color="primary" fontSize="small" />
-            <Typography color="text.secondary" noWrap variant="caption">
+            <Typography color="text.secondary" sx={{ minWidth: 0, overflowWrap: 'anywhere' }} variant="caption">
               {movie.link}
             </Typography>
           </Paper>
@@ -810,33 +831,33 @@ function BulkBar({ selectedPaths, onClear, onDeleteRequest }) {
         alignItems: { sm: 'center', xs: 'stretch' },
         border: 1,
         borderColor: 'primary.dark',
-        bottom: 24,
+        bottom: { sm: 24, xs: 12 },
         display: 'flex',
         flexDirection: { sm: 'row', xs: 'column' },
         gap: 1,
         left: '50%',
-        maxWidth: 'calc(100% - 32px)',
+        maxWidth: { sm: 'calc(100% - 32px)', xs: 'calc(100% - 24px)' },
         p: 1.25,
         position: 'fixed',
         transform: 'translateX(-50%)',
-        width: { sm: 'auto', xs: 'calc(100% - 32px)' },
+        width: { sm: 'auto', xs: 'calc(100% - 24px)' },
         zIndex: theme => theme.zIndex.snackbar
       }}
     >
-      <Typography sx={{ px: 1.25, whiteSpace: 'nowrap' }} variant="body2">
+      <Typography sx={{ px: 1.25, textAlign: { sm: 'left', xs: 'center' }, whiteSpace: 'nowrap' }} variant="body2">
         <Box component="strong" sx={{ color: 'primary.light', fontSize: 18 }}>
           {selectedPaths.size}
         </Box>{' '}
         items selected
       </Typography>
       <Divider flexItem orientation="vertical" sx={{ display: { sm: 'block', xs: 'none' } }} />
-      <Button color="error" onClick={() => onDeleteRequest(paths, false)} startIcon={<DeleteOutlineIcon />} variant="outlined">
+      <Button color="error" onClick={() => onDeleteRequest(paths, false)} startIcon={<DeleteOutlineIcon />} sx={{ width: { sm: 'auto', xs: '100%' } }} variant="outlined">
         Delete Generated Assets
       </Button>
-      <Button color="error" onClick={() => onDeleteRequest(paths, true)} startIcon={<DeleteForeverIcon />} variant="contained">
+      <Button color="error" onClick={() => onDeleteRequest(paths, true)} startIcon={<DeleteForeverIcon />} sx={{ width: { sm: 'auto', xs: '100%' } }} variant="contained">
         Delete Movie Files
       </Button>
-      <Button onClick={onClear} variant="text">
+      <Button onClick={onClear} sx={{ width: { sm: 'auto', xs: '100%' } }} variant="text">
         Cancel
       </Button>
     </Paper>
@@ -852,6 +873,8 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [mobileTab, setMobileTab] = useState('list');
+  const isMobileLayout = useMediaQuery(theme => theme.breakpoints.down('lg'));
 
   const selectedMovie = useMemo(
     () => movies.find(movie => movie.path === selectedPath) || null,
@@ -909,6 +932,11 @@ export default function App() {
     });
   }
 
+  function handleSelectMovie(path) {
+    setSelectedPath(path);
+    if (isMobileLayout) setMobileTab('details');
+  }
+
   function requestDelete(paths, deleteOriginal) {
     setPendingDelete({ paths, deleteOriginal });
   }
@@ -933,6 +961,40 @@ export default function App() {
 
   const readyForPlayer = Boolean(selectedMovie?.link);
   const deleteLabel = pendingDelete?.deleteOriginal ? 'movie files and generated assets' : 'generated assets';
+  const fileManagerPanel = (
+    <SectionCard
+      action={
+        <Chip
+          icon={<VideoLibraryIcon />}
+          label={loading ? 'Loading' : `${movies.length} files`}
+          size="small"
+          variant="outlined"
+        />
+      }
+      title="File Manager"
+    >
+      <MovieList
+        coverVersions={coverVersions}
+        loading={loading}
+        movies={movies}
+        onSelect={handleSelectMovie}
+        onToggleSelect={toggleSelected}
+        selectedPath={selectedPath}
+        selectedPaths={selectedPaths}
+      />
+    </SectionCard>
+  );
+  const detailsPanel = (
+    <Stack spacing={2}>
+      <DetailsPanel
+        coverVersions={coverVersions}
+        movie={selectedMovie}
+        onDeleteRequest={requestDelete}
+        onReload={reloadMoviesAndBustCover}
+      />
+      <Player active={Boolean(readyForPlayer)} movie={selectedMovie} />
+    </Stack>
+  );
 
   return (
     <Box sx={{ minHeight: '100vh', pb: 12 }}>
@@ -998,59 +1060,57 @@ export default function App() {
             </Stack>
           </Paper>
 
+          <Paper
+            variant="outlined"
+            sx={{
+              display: { lg: 'none', xs: 'block' },
+              overflow: 'hidden'
+            }}
+          >
+            <Tabs
+              onChange={(_, value) => setMobileTab(value)}
+              value={mobileTab}
+              variant="fullWidth"
+            >
+              <Tab label="Danh sách" value="list" />
+              <Tab label="Chi tiết" value="details" />
+            </Tabs>
+          </Paper>
+
+          <Box sx={{ display: { lg: 'none', xs: 'block' } }}>
+            {mobileTab === 'list' ? fileManagerPanel : detailsPanel}
+          </Box>
+
           <Box
             sx={{
               alignItems: 'flex-start',
-              display: 'grid',
+              display: { lg: 'grid', xs: 'none' },
               gap: 2,
-              gridTemplateColumns: { lg: 'minmax(0, 0.95fr) minmax(0, 1.05fr)', xs: '1fr' }
+              gridTemplateColumns: 'minmax(0, 0.95fr) minmax(0, 1.05fr)'
             }}
           >
-            <SectionCard
-              action={
-                <Chip
-                  icon={<VideoLibraryIcon />}
-                  label={loading ? 'Loading' : `${movies.length} files`}
-                  size="small"
-                  variant="outlined"
-                />
-              }
-              title="File Manager"
-            >
-              <MovieList
-                coverVersions={coverVersions}
-                loading={loading}
-                movies={movies}
-                onSelect={setSelectedPath}
-                onToggleSelect={toggleSelected}
-                selectedPath={selectedPath}
-                selectedPaths={selectedPaths}
-              />
-            </SectionCard>
-
-            <Stack spacing={2}>
-              <DetailsPanel
-                coverVersions={coverVersions}
-                movie={selectedMovie}
-                onDeleteRequest={requestDelete}
-                onReload={reloadMoviesAndBustCover}
-              />
-              <Player active={Boolean(readyForPlayer)} movie={selectedMovie} />
-            </Stack>
+            {fileManagerPanel}
+            {detailsPanel}
           </Box>
         </Stack>
       </Box>
 
       <BulkBar onClear={() => setSelectedPaths(new Set())} onDeleteRequest={requestDelete} selectedPaths={selectedPaths} />
 
-      <Dialog onClose={() => (!deleteBusy ? setPendingDelete(null) : null)} open={Boolean(pendingDelete)}>
+      <Dialog
+        fullWidth
+        maxWidth="xs"
+        onClose={() => (!deleteBusy ? setPendingDelete(null) : null)}
+        open={Boolean(pendingDelete)}
+        PaperProps={{ sx: { m: { sm: 3, xs: 1.5 } } }}
+      >
         <DialogTitle>Confirm delete</DialogTitle>
         <DialogContent>
           <DialogContentText>
             Delete {deleteLabel} for {pendingDelete?.paths.length || 0} item(s)? This action cannot be undone from the CMS.
           </DialogContentText>
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ flexDirection: { sm: 'row', xs: 'column-reverse' }, gap: { sm: 0, xs: 1 }, px: { sm: 3, xs: 2 } }}>
           <Button disabled={deleteBusy} onClick={() => setPendingDelete(null)}>
             Cancel
           </Button>
@@ -1059,6 +1119,7 @@ export default function App() {
             disabled={deleteBusy}
             onClick={confirmDelete}
             startIcon={deleteBusy ? <CircularProgress size={16} /> : <DeleteForeverIcon />}
+            sx={{ width: { sm: 'auto', xs: '100%' } }}
             variant="contained"
           >
             Delete
@@ -1067,12 +1128,13 @@ export default function App() {
       </Dialog>
 
       <Snackbar
-        anchorOrigin={{ horizontal: 'right', vertical: 'top' }}
+        anchorOrigin={{ horizontal: isMobileLayout ? 'center' : 'right', vertical: isMobileLayout ? 'bottom' : 'top' }}
         autoHideDuration={5000}
         onClose={() => setNotice('')}
         open={Boolean(notice)}
+        sx={{ bottom: { xs: selectedPaths.size > 0 ? 178 : 16, sm: 24 }, left: { xs: 12, sm: 'auto' }, right: { xs: 12, sm: 24 } }}
       >
-        <Alert onClose={() => setNotice('')} severity={notice.toLowerCase().includes('failed') ? 'error' : 'info'} variant="filled">
+        <Alert onClose={() => setNotice('')} severity={notice.toLowerCase().includes('failed') ? 'error' : 'info'} sx={{ width: { xs: '100%', sm: 'auto' } }} variant="filled">
           {notice}
         </Alert>
       </Snackbar>
