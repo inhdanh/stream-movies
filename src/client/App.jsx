@@ -22,6 +22,7 @@ import {
   ListItemAvatar,
   ListItemButton,
   ListItemText,
+  LinearProgress,
   Paper,
   Skeleton,
   Snackbar,
@@ -44,14 +45,14 @@ import MovieFilterIcon from '@mui/icons-material/MovieFilter';
 import SaveIcon from '@mui/icons-material/Save';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
 import {
-  createCompatibleMp4,
-  createFullMkv,
   deleteMovies,
+  fetchAacTranscodeStatus,
   fetchMovies,
   fetchProgress,
   generateCover,
   saveMetadata,
   saveProgress,
+  startAacTranscode,
   uploadCover
 } from './api.js';
 
@@ -444,18 +445,62 @@ function CoverUploader({ movie, onUploaded }) {
 
 function DirectPlaybackPanel({ movie, onCompatibleCreated }) {
   const [copyState, setCopyState] = useState('');
-  const [mp4State, setMp4State] = useState('');
-  const [mp4StateType, setMp4StateType] = useState('info');
-  const [creatingMp4, setCreatingMp4] = useState(false);
-  const [creatingFullMkv, setCreatingFullMkv] = useState(false);
+  const [actionState, setActionState] = useState('');
+  const [actionStateType, setActionStateType] = useState('info');
+  const [aacJob, setAacJob] = useState(null);
+  const [startingAac, setStartingAac] = useState(false);
+  const completedAacOutputRef = useRef('');
 
   const sourceResolution = useMemo(() => getSourceResolution(movie), [movie]);
+  const aacBusy = ['queued', 'running'].includes(aacJob?.status);
+  const aacProgress = Math.max(0, Math.min(100, Math.round(aacJob?.progress || 0)));
 
   useEffect(() => {
     setCopyState('');
-    setMp4State('');
-    setMp4StateType('info');
+    setActionState('');
+    setActionStateType('info');
+    setAacJob(null);
+    completedAacOutputRef.current = '';
   }, [movie?.path]);
+
+  useEffect(() => {
+    if (!movie?.path) return undefined;
+
+    let disposed = false;
+    fetchAacTranscodeStatus(movie.path)
+      .then(job => {
+        if (!disposed && job?.status !== 'idle') setAacJob(job);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+    };
+  }, [movie?.path]);
+
+  useEffect(() => {
+    if (!movie?.path || !aacBusy) return undefined;
+
+    const timer = window.setInterval(async () => {
+      try {
+        const job = await fetchAacTranscodeStatus(movie.path);
+        setAacJob(job);
+
+        if (job.status === 'done' && job.outputPath && completedAacOutputRef.current !== job.outputPath) {
+          completedAacOutputRef.current = job.outputPath;
+          await onCompatibleCreated(job.outputPath);
+        }
+      } catch (error) {
+        setAacJob(current => ({
+          ...(current || {}),
+          error: error.message || 'Failed to read AAC transcode progress.',
+          status: 'failed'
+        }));
+      }
+    }, 2000);
+
+    return () => window.clearInterval(timer);
+  }, [aacBusy, movie?.path, onCompatibleCreated]);
 
   if (!movie) return null;
 
@@ -481,39 +526,32 @@ function DirectPlaybackPanel({ movie, onCompatibleCreated }) {
     }
   }
 
-  async function handleCreateCompatibleMp4() {
-    setCreatingMp4(true);
-    setMp4State('Creating MP4. This may take a while for large files...');
-    setMp4StateType('info');
+  async function handleStartAacTranscode() {
+    setStartingAac(true);
+    setActionState('Starting AAC transcode...');
+    setActionStateType('info');
 
     try {
-      const result = await createCompatibleMp4(movie.path);
-      setMp4State(result.alreadyExists ? 'Compatible MP4 already exists.' : 'Compatible MP4 created.');
-      setMp4StateType('success');
-      await onCompatibleCreated(movie.path);
-    } catch (error) {
-      setMp4State(error.message || 'Create MP4 failed.');
-      setMp4StateType('error');
-    } finally {
-      setCreatingMp4(false);
-    }
-  }
+      const result = await startAacTranscode(movie.path);
+      const job = result.job || result;
+      setAacJob(job);
 
-  async function handleCreateFullMkv() {
-    setCreatingFullMkv(true);
-    setMp4State('Creating full MKV remux...');
-    setMp4StateType('info');
-
-    try {
-      const result = await createFullMkv(movie.path);
-      setMp4State(result.alreadyExists ? 'Full MKV remux already exists.' : 'Full MKV remux created.');
-      setMp4StateType('success');
-      await onCompatibleCreated(movie.path);
+      if (job.status === 'skipped') {
+        setActionState('Audio is already AAC.');
+        setActionStateType('success');
+      } else if (job.status === 'done' && job.outputPath) {
+        setActionState('AAC transcode is complete.');
+        setActionStateType('success');
+        await onCompatibleCreated(job.outputPath);
+      } else {
+        setActionState('AAC transcode started.');
+        setActionStateType('info');
+      }
     } catch (error) {
-      setMp4State(error.message || 'Create full MKV failed.');
-      setMp4StateType('error');
+      setActionState(error.message || 'Start AAC transcode failed.');
+      setActionStateType('error');
     } finally {
-      setCreatingFullMkv(false);
+      setStartingAac(false);
     }
   }
 
@@ -535,30 +573,51 @@ function DirectPlaybackPanel({ movie, onCompatibleCreated }) {
           Copy Direct URL
         </Button>
         <Button
-          disabled={creatingMp4 || creatingFullMkv || !movie.link}
-          onClick={handleCreateCompatibleMp4}
-          startIcon={creatingMp4 ? <CircularProgress size={16} /> : <VideoLibraryIcon />}
-          variant="contained"
-        >
-          {creatingMp4 ? 'Creating MP4' : 'Create Compatible MP4'}
-        </Button>
-        <Button
-          disabled={creatingMp4 || creatingFullMkv || !movie.link}
-          onClick={handleCreateFullMkv}
-          startIcon={creatingFullMkv ? <CircularProgress size={16} /> : <VideoLibraryIcon />}
+          disabled={aacBusy || startingAac || !movie.link}
+          onClick={handleStartAacTranscode}
+          startIcon={(startingAac || aacBusy) ? <CircularProgress size={16} /> : <VideoLibraryIcon />}
           variant="outlined"
         >
-          {creatingFullMkv ? 'Creating MKV' : 'Create Full MKV'}
+          {aacBusy ? `AAC ${aacProgress}%` : 'Transcode AAC'}
         </Button>
       </Stack>
+      {aacJob && aacJob.status !== 'idle' ? (
+        <Box>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.75 }}>
+            <Typography color="text.secondary" variant="caption">
+              AAC transcode: {aacJob.status}
+            </Typography>
+            {aacJob.durationSeconds ? (
+              <Typography color="text.secondary" variant="caption">
+                {formatDuration(aacJob.timeSeconds || 0)} / {formatDuration(aacJob.durationSeconds)}
+              </Typography>
+            ) : null}
+          </Stack>
+          <LinearProgress
+            color={aacJob.status === 'failed' ? 'error' : 'primary'}
+            variant={aacBusy || aacProgress > 0 ? 'determinate' : 'indeterminate'}
+            value={aacProgress}
+          />
+          {aacJob.outputPath ? (
+            <Typography color="text.secondary" sx={{ display: 'block', mt: 0.75 }} variant="caption">
+              Output: {aacJob.outputPath}
+            </Typography>
+          ) : null}
+          {aacJob.error ? (
+            <Typography color="error" sx={{ display: 'block', mt: 0.75 }} variant="caption">
+              {aacJob.error}
+            </Typography>
+          ) : null}
+        </Box>
+      ) : null}
       {copyState ? (
         <Alert severity={copyState === 'Copied.' ? 'success' : 'error'} variant="outlined">
           {copyState}
         </Alert>
       ) : null}
-      {mp4State ? (
-        <Alert severity={mp4StateType} variant="outlined">
-          {mp4State}
+      {actionState ? (
+        <Alert severity={actionStateType} variant="outlined">
+          {actionState}
         </Alert>
       ) : null}
     </Stack>
@@ -734,23 +793,6 @@ function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
               {movie.link}
             </Typography>
           </Paper>
-          {movie.fallbackLink ? (
-            <Paper
-              variant="outlined"
-              sx={{
-                alignItems: 'center',
-                display: 'flex',
-                gap: 1,
-                minWidth: 0,
-                p: 1.25
-              }}
-            >
-              <LinkIcon color="secondary" fontSize="small" />
-              <Typography color="text.secondary" noWrap variant="caption">
-                {movie.fallbackLink}
-              </Typography>
-            </Paper>
-          ) : null}
         </Stack>
       </CardContent>
     </SectionCard>

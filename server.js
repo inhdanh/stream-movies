@@ -24,7 +24,6 @@ const COVER_UPLOAD_TYPES = new Map([
 ]);
 const AUTO_COVER_ENABLED = process.env.AUTO_COVER_ENABLED !== 'false';
 const AUTO_COVER_RETRY_MS = 15 * 60 * 1000;
-
 const VIDEO_CONTENT_TYPES = new Map([
   ['.mkv', 'video/x-matroska'],
   ['.mp4', 'video/mp4'],
@@ -36,6 +35,8 @@ const VIDEO_CONTENT_TYPES = new Map([
 
 const autoCoverJobs = new Map();
 let autoCoverQueue = Promise.resolve();
+const aacTranscodeJobs = new Map();
+let aacTranscodeQueue = Promise.resolve();
 
 function resolveMoviePath(filename) {
   const filePath = path.resolve(MOVIES_DIR, filename);
@@ -134,13 +135,15 @@ function sendMediaFile(req, res, filePath) {
   return fs.createReadStream(filePath).pipe(res);
 }
 
-function runFfmpeg(args) {
+function runFfmpeg(args, onStderr) {
   return new Promise((resolve, reject) => {
     const proc = spawn('ffmpeg', args);
     let stderr = '';
 
     proc.stderr.on('data', data => {
-      stderr += data.toString();
+      const text = data.toString();
+      stderr += text;
+      if (onStderr) onStderr(text);
     });
 
     proc.on('error', reject);
@@ -156,14 +159,9 @@ function runFfmpeg(args) {
   });
 }
 
-function getCompatibleMp4OutputPath(filePath) {
+function getAacTranscodeOutputPath(filePath) {
   const parsed = path.parse(filePath);
-  return path.join(parsed.dir, `${parsed.name}4khevcaac.mp4`);
-}
-
-function getFullMkvOutputPath(filePath) {
-  const parsed = path.parse(filePath);
-  return path.join(parsed.dir, `${parsed.name}remuxfull.mkv`);
+  return path.join(parsed.dir, `${parsed.name}AAC${parsed.ext}`);
 }
 
 function getMediaUrl(relPath) {
@@ -185,18 +183,21 @@ function getAutoCoverStatus(coverBasePath) {
   };
 }
 
-function serializeMovie(movie) {
-  const filePath = resolveMoviePath(movie.path);
-  const fallbackPaths = filePath
-    ? [getCompatibleMp4OutputPath(filePath), getFullMkvOutputPath(filePath)]
-        .map(candidatePath => path.relative(MOVIES_DIR, candidatePath).replace(/\\/g, '/'))
-    : [];
-  const fallbackPath = fallbackPaths.find(candidatePath => {
-    const candidateFilePath = resolveMoviePath(candidatePath);
-    return candidateFilePath && fs.existsSync(candidateFilePath);
-  });
-  const fallbackLink = fallbackPath ? getMediaUrl(fallbackPath) : null;
+function getAutoAacTranscodeStatus(filename) {
+  const job = aacTranscodeJobs.get(filename);
+  if (!job) return null;
+  return {
+    status: job.status,
+    error: job.error || null,
+    progress: job.progress || 0,
+    timeSeconds: job.timeSeconds || 0,
+    durationSeconds: job.durationSeconds || null,
+    outputPath: job.outputPath || null,
+    updatedAt: job.updatedAt
+  };
+}
 
+function serializeMovie(movie) {
   return {
     name: movie.name,
     path: movie.path,
@@ -215,49 +216,53 @@ function serializeMovie(movie) {
     coverGenerationError: movie.autoCoverStatus?.status === 'failed'
       ? movie.autoCoverStatus.error
       : null,
-    link: getMediaUrl(movie.path),
-    fallbackLink
+    audioTranscoding: ['queued', 'running'].includes(movie.autoAacTranscodeStatus?.status),
+    audioTranscodeError: movie.autoAacTranscodeStatus?.status === 'failed'
+      ? movie.autoAacTranscodeStatus.error
+      : null,
+    audioTranscodeProgress: movie.autoAacTranscodeStatus?.progress || 0,
+    audioTranscodedPath: movie.autoAacTranscodeStatus?.outputPath || null,
+    link: getMediaUrl(movie.path)
   };
 }
 
-function getAudioCompatibilityPlan(mediaInfo) {
+function needsAacAudioTranscode(mediaInfo) {
   const audioStreams = mediaInfo.audio || [];
-  const aacStream = audioStreams.find(stream => String(stream.codec).toLowerCase() === 'aac');
-  if (aacStream) {
-    return { stream: aacStream, codecArgs: ['-c:a', 'copy'], copied: true };
-  }
+  if (!audioStreams.length) return false;
 
-  const dolbyStream = audioStreams.find(stream => ['eac3', 'ac3'].includes(String(stream.codec).toLowerCase()));
-  if (dolbyStream) {
-    return { stream: dolbyStream, codecArgs: ['-c:a', 'copy'], copied: true };
-  }
-
-  const fallbackStream = audioStreams[0];
-  if (fallbackStream) {
-    return { stream: fallbackStream, codecArgs: ['-c:a', 'aac', '-b:a', '192k'], copied: false };
-  }
-
-  return null;
+  return audioStreams.some(stream => String(stream.codec || '').toLowerCase() !== 'aac');
 }
 
-async function createCompatibleMp4(filename) {
+function parseFfmpegTimeSeconds(text) {
+  const matches = Array.from(String(text || '').matchAll(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g));
+  const match = matches.at(-1);
+  if (!match) return null;
+
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  const seconds = Number.parseFloat(match[3]);
+  if (![hours, minutes, seconds].every(Number.isFinite)) return null;
+
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+function updateAacTranscodeJob(filename, patch) {
+  const existingJob = aacTranscodeJobs.get(filename);
+  if (!existingJob) return;
+
+  aacTranscodeJobs.set(filename, {
+    ...existingJob,
+    ...patch,
+    updatedAt: Date.now()
+  });
+}
+
+async function transcodeAudioToAac(filename, onProgress) {
   const filePath = resolveMoviePath(filename);
   if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
     const error = new Error('Movie not found');
     error.statusCode = 404;
     throw error;
-  }
-
-  const outputPath = getCompatibleMp4OutputPath(filePath);
-  if (path.resolve(filePath) === path.resolve(outputPath)) {
-    const error = new Error('Source file is already the target MP4 path');
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const outputRelPath = path.relative(MOVIES_DIR, outputPath).replace(/\\/g, '/');
-  if (fs.existsSync(outputPath)) {
-    return { alreadyExists: true, path: outputRelPath };
   }
 
   const mediaInfo = await getMediaInfo(filePath);
@@ -267,65 +272,46 @@ async function createCompatibleMp4(filename) {
     throw error;
   }
 
-  const audioPlan = getAudioCompatibilityPlan(mediaInfo);
-  const tempOutput = path.join(path.dirname(outputPath), `.${path.basename(outputPath)}.tmp-${Date.now()}.mp4`);
-  const args = [
-    '-hide_banner',
-    '-y',
-    '-i', filePath,
-    '-map', '0:v:0'
-  ];
-
-  if (audioPlan) {
-    args.push('-map', `0:${audioPlan.stream.index}`);
+  if (!needsAacAudioTranscode(mediaInfo)) {
+    return {
+      skipped: true,
+      reason: 'Audio is already AAC',
+      path: filename
+    };
   }
 
-  args.push(
-    '-sn',
-    '-dn',
-    '-map_metadata', '0',
-    '-c:v', 'copy',
-    '-tag:v', 'hvc1',
-    ...(audioPlan ? audioPlan.codecArgs : []),
-    '-movflags', '+faststart',
-    tempOutput
-  );
-
-  try {
-    await runFfmpeg(args);
-    fs.renameSync(tempOutput, outputPath);
-  } finally {
-    fs.rmSync(tempOutput, { force: true });
+  const durationSeconds = Number(mediaInfo.duration);
+  if (Number.isFinite(durationSeconds) && durationSeconds > 0 && onProgress) {
+    onProgress({ durationSeconds, progress: 0, timeSeconds: 0 });
   }
 
-  return {
-    alreadyExists: false,
-    audioCopied: Boolean(audioPlan?.copied),
-    path: outputRelPath
-  };
-}
-
-async function createFullMkvRemux(filename) {
-  const filePath = resolveMoviePath(filename);
-  if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-    const error = new Error('Movie not found');
-    error.statusCode = 404;
-    throw error;
-  }
-
-  const outputPath = getFullMkvOutputPath(filePath);
+  const outputPath = getAacTranscodeOutputPath(filePath);
   if (path.resolve(filePath) === path.resolve(outputPath)) {
-    const error = new Error('Source file is already the target MKV path');
+    const error = new Error('Source file is already the target AAC path');
     error.statusCode = 400;
     throw error;
   }
 
   const outputRelPath = path.relative(MOVIES_DIR, outputPath).replace(/\\/g, '/');
   if (fs.existsSync(outputPath)) {
-    return { alreadyExists: true, path: outputRelPath };
+    const outputMediaInfo = await getMediaInfo(outputPath);
+    if (!outputMediaInfo.video?.length || !outputMediaInfo.audio?.length || needsAacAudioTranscode(outputMediaInfo)) {
+      const error = new Error(`AAC target already exists but is not a valid AAC video: ${outputRelPath}`);
+      error.statusCode = 409;
+      throw error;
+    }
+
+    fs.unlinkSync(filePath);
+    return {
+      alreadyExists: true,
+      skipped: false,
+      path: outputRelPath
+    };
   }
 
-  const tempOutput = path.join(path.dirname(outputPath), `.${path.basename(outputPath)}.tmp-${Date.now()}.mkv`);
+  const transcodeId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const parsedOutput = path.parse(outputPath);
+  const tempOutput = path.join(parsedOutput.dir, `.${parsedOutput.name}.tmp-${transcodeId}${parsedOutput.ext}`);
 
   try {
     await runFfmpeg([
@@ -336,15 +322,29 @@ async function createFullMkvRemux(filename) {
       '-map_metadata', '0',
       '-map_chapters', '0',
       '-c', 'copy',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-ac', '2',
       tempOutput
-    ]);
+    ], text => {
+      if (!onProgress) return;
+
+      const timeSeconds = parseFfmpegTimeSeconds(text);
+      if (timeSeconds === null) return;
+
+      const progress = Number.isFinite(durationSeconds) && durationSeconds > 0
+        ? Math.min(99, Math.max(0, Math.round((timeSeconds / durationSeconds) * 100)))
+        : 0;
+      onProgress({ durationSeconds, progress, timeSeconds });
+    });
     fs.renameSync(tempOutput, outputPath);
+    fs.unlinkSync(filePath);
   } finally {
     fs.rmSync(tempOutput, { force: true });
   }
 
   return {
-    alreadyExists: false,
+    skipped: false,
     path: outputRelPath
   };
 }
@@ -576,6 +576,84 @@ function withAutoCoverStatus(movie) {
   };
 }
 
+function startAacTranscodeJob(filename) {
+  const filePath = resolveMoviePath(filename);
+  if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    const error = new Error('Movie not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const existingJob = aacTranscodeJobs.get(filename);
+  const now = Date.now();
+  if (existingJob) {
+    if (['queued', 'running'].includes(existingJob.status)) {
+      return getAutoAacTranscodeStatus(filename);
+    }
+  }
+
+  aacTranscodeJobs.set(filename, {
+    durationSeconds: null,
+    error: null,
+    filename,
+    outputPath: null,
+    progress: 0,
+    status: 'queued',
+    timeSeconds: 0,
+    updatedAt: now
+  });
+
+  aacTranscodeQueue = aacTranscodeQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const runningJob = aacTranscodeJobs.get(filename);
+      if (!runningJob) return;
+
+      updateAacTranscodeJob(filename, {
+        status: 'running',
+        progress: 0,
+        timeSeconds: 0
+      });
+
+      try {
+        const result = await transcodeAudioToAac(filename, progress => {
+          updateAacTranscodeJob(filename, progress);
+        });
+        updateAacTranscodeJob(filename, {
+          error: null,
+          outputPath: result.path,
+          progress: 100,
+          status: result.skipped ? 'skipped' : 'done',
+          timeSeconds: aacTranscodeJobs.get(filename)?.durationSeconds || aacTranscodeJobs.get(filename)?.timeSeconds || 0
+        });
+
+        if (result.skipped) {
+          console.log(`[Audio] Skipped AAC transcode for ${filename}: ${result.reason}`);
+        } else if (result.alreadyExists) {
+          console.log(`[Audio] Removed source because AAC target already exists: ${filename} -> ${result.path}`);
+        } else {
+          console.log(`[Audio] Transcoded audio to AAC: ${filename} -> ${result.path}`);
+        }
+      } catch (error) {
+        updateAacTranscodeJob(filename, {
+          error: error.message || 'Failed to transcode audio to AAC',
+          outputPath: null,
+          status: 'failed'
+        });
+        console.warn(`[Audio] AAC transcode failed for ${filename}: ${error.message}`);
+      }
+    });
+
+  return getAutoAacTranscodeStatus(filename);
+}
+
+function withAutoAacTranscodeStatus(movie) {
+  return {
+    ...movie,
+    autoAacTranscodeStatus: getAutoAacTranscodeStatus(movie.path)
+  };
+}
+
 // Ensure generated asset directories exist
 if (!fs.existsSync(COVERS_DIR)) {
   fs.mkdirSync(COVERS_DIR, { recursive: true });
@@ -590,7 +668,7 @@ app.get('/movies', async (req, res) => {
     const movies = await scanMovies(MOVIES_DIR, '', { coversDir: COVERS_DIR });
     const autoCover = queueMissingCoverImages(movies);
     res.json({
-      movies: movies.map(movie => serializeMovie(withAutoCoverStatus(movie))),
+      movies: movies.map(movie => serializeMovie(withAutoAacTranscodeStatus(withAutoCoverStatus(movie)))),
       autoCover
     });
   } catch (error) {
@@ -620,30 +698,37 @@ app.put(/^\/movies\/(.+)\/metadata$/, (req, res) => {
   }
 });
 
-// 3. Create a high-quality MP4 fallback by remuxing the original video stream.
-app.post(/^\/movies\/(.+)\/compatible-mp4$/, async (req, res) => {
+// 3. Transcode all audio streams to AAC while preserving video, subtitles, chapters, and metadata.
+app.post(/^\/movies\/(.+)\/aac-transcode$/, async (req, res) => {
   const filename = getRouteFileParam(req);
 
   try {
-    const result = await createCompatibleMp4(filename);
-    res.json({ success: true, ...result });
+    const job = startAacTranscodeJob(filename);
+    res.status(job.status === 'queued' ? 202 : 200).json({ success: true, job });
   } catch (error) {
-    console.error('Error creating compatible MP4:', error);
-    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to create compatible MP4' });
+    console.error('Error starting AAC transcode:', error);
+    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to start AAC transcode' });
   }
 });
 
-// 3a. Create a full MKV remux that preserves video, audio, subtitles, chapters, and metadata.
-app.post(/^\/movies\/(.+)\/full-mkv$/, async (req, res) => {
+// 3a. Read AAC transcode job status/progress for a movie.
+app.get(/^\/movies\/(.+)\/aac-transcode$/, (req, res) => {
   const filename = getRouteFileParam(req);
+  const job = getAutoAacTranscodeStatus(filename);
 
-  try {
-    const result = await createFullMkvRemux(filename);
-    res.json({ success: true, ...result });
-  } catch (error) {
-    console.error('Error creating full MKV remux:', error);
-    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to create full MKV remux' });
+  if (!job) {
+    return res.json({
+      status: 'idle',
+      error: null,
+      progress: 0,
+      timeSeconds: 0,
+      durationSeconds: null,
+      outputPath: null,
+      updatedAt: null
+    });
   }
+
+  return res.json(job);
 });
 
 // 3b. Upload/replace movie cover image

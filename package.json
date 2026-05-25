@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "start": "node server.js",
-    "dev:all": "concurrently \"npm run dev\" \"npm run start\"",
+    "start": "npm run build && node server.js",
+    "dev:all": "npx kill-port 3000 5173 && concurrently \"npm run dev\" \"npm run start\"",
     "test": "npm run build"
   },
   "keywords": [],

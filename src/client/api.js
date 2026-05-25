@@ -37,16 +37,14 @@ export async function generateCover(path) {
   }).then(parseJsonResponse);
 }
 
-export async function createCompatibleMp4(path) {
-  return fetch(`/movies/${encodeMoviePath(path)}/compatible-mp4`, {
+export async function startAacTranscode(path) {
+  return fetch(`/movies/${encodeMoviePath(path)}/aac-transcode`, {
     method: 'POST'
   }).then(parseJsonResponse);
 }
 
-export async function createFullMkv(path) {
-  return fetch(`/movies/${encodeMoviePath(path)}/full-mkv`, {
-    method: 'POST'
-  }).then(parseJsonResponse);
+export async function fetchAacTranscodeStatus(path) {
+  return fetch(`/movies/${encodeMoviePath(path)}/aac-transcode`).then(parseJsonResponse);
 }
 
 export async function deleteMovies(paths, deleteOriginal) {
