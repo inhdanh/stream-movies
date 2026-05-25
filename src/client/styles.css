@@ -16,9 +16,8 @@ body {
   min-height: 100vh;
   margin: 0;
   background:
-    radial-gradient(circle at 82% 16%, rgba(38, 198, 218, 0.1), transparent 28rem),
-    radial-gradient(circle at 12% 0%, rgba(124, 77, 255, 0.14), transparent 24rem),
-    linear-gradient(135deg, #090e16 0%, #0c1420 48%, #070b12 100%);
+    radial-gradient(circle at 58% 10%, rgba(31, 41, 90, 0.42), transparent 30rem),
+    linear-gradient(180deg, #080b1f 0%, #070b1d 42%, #060a18 100%);
 }
 
 button,
@@ -41,9 +40,9 @@ video {
 
 ::-webkit-scrollbar-thumb {
   border-radius: 8px;
-  background: rgba(144, 164, 174, 0.34);
+  background: rgba(148, 163, 184, 0.55);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(38, 198, 218, 0.54);
+  background: rgba(6, 182, 212, 0.7);
 }

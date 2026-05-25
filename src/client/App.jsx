@@ -43,10 +43,15 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlined';
 import FolderIcon from '@mui/icons-material/Folder';
 import ImageSearchIcon from '@mui/icons-material/ImageSearch';
+import KeyboardArrowRightIcon from '@mui/icons-material/KeyboardArrowRight';
 import LinkIcon from '@mui/icons-material/Link';
 import MovieFilterIcon from '@mui/icons-material/MovieFilter';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import SaveIcon from '@mui/icons-material/Save';
+import SearchIcon from '@mui/icons-material/Search';
+import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import VideoLibraryIcon from '@mui/icons-material/VideoLibrary';
+import VolumeUpOutlinedIcon from '@mui/icons-material/VolumeUpOutlined';
 import {
   deleteMovies,
   fetchAacTranscodeStatus,
@@ -96,20 +101,37 @@ function getSourceResolution(movie) {
 
 function SectionCard({ title, action, children, sx }) {
   return (
-    <Card variant="outlined" sx={{ overflow: 'hidden', ...sx }}>
+    <Card
+      variant="outlined"
+      sx={{
+        bgcolor: 'rgba(16, 20, 43, 0.82)',
+        borderColor: 'rgba(148, 163, 184, 0.22)',
+        boxShadow: '0 20px 60px rgba(0, 0, 0, 0.18)',
+        overflow: 'hidden',
+        ...sx
+      }}
+    >
       <Box
         sx={{
           alignItems: 'center',
-          bgcolor: 'background.paper',
-          borderBottom: 1,
-          borderColor: 'divider',
           display: 'flex',
           justifyContent: 'space-between',
-          minHeight: 48,
-          px: { sm: 2, xs: 1.5 }
+          minHeight: 44,
+          px: { sm: 2, xs: 1.5 },
+          pt: 0.75
         }}
       >
-        <Typography variant="subtitle2" sx={{ fontWeight: 800, letterSpacing: 0.2 }}>
+        <Typography
+          variant="subtitle2"
+          sx={{
+            alignItems: 'center',
+            display: 'flex',
+            fontWeight: 900,
+            gap: 1,
+            letterSpacing: 0
+          }}
+        >
+          <Box component="span" sx={{ bgcolor: 'primary.main', borderRadius: 1, height: 18, width: 4 }} />
           {title}
         </Typography>
         {action}
@@ -119,38 +141,7 @@ function SectionCard({ title, action, children, sx }) {
   );
 }
 
-function MovieThumb({ coverUrl, generating, version }) {
-  return (
-    <Avatar
-      variant="rounded"
-      sx={{
-        bgcolor: 'grey.900',
-        border: 1,
-        borderColor: 'divider',
-        color: 'primary.light',
-        fontSize: 11,
-        fontWeight: 900,
-        height: { sm: 46, xs: 40 },
-        width: { sm: 72, xs: 62 }
-      }}
-    >
-      {generating ? (
-        <CircularProgress color="inherit" size={18} />
-      ) : coverUrl ? (
-        <Box
-          alt=""
-          component="img"
-          src={`${coverUrl}?v=${version || 0}`}
-          sx={{ height: '100%', objectFit: 'cover', width: '100%' }}
-        />
-      ) : (
-        'STV'
-      )}
-    </Avatar>
-  );
-}
-
-function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading, onSelect, onToggleSelect }) {
+function MovieList({ movies, selectedPath, selectedPaths, loading, onSelect, onToggleSelect }) {
   if (loading) {
     return (
       <Stack spacing={1.25} sx={{ p: 1.5 }}>
@@ -178,11 +169,18 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
   }
 
   return (
-    <List disablePadding sx={{ maxHeight: { lg: 642, xs: 'calc(100vh - 268px)' }, minHeight: { xs: 360, sm: 460 }, overflowY: 'auto', p: { sm: 1, xs: 0.75 } }}>
+    <List
+      disablePadding
+      sx={{
+        maxHeight: { lg: 620, xs: 'calc(100vh - 268px)' },
+        minHeight: { xs: 360, sm: 460 },
+        overflowY: 'auto',
+        p: { sm: 1, xs: 0.75 }
+      }}
+    >
       {movies.map(movie => {
         const selected = selectedPath === movie.path;
         const checked = selectedPaths.has(movie.path);
-        const coverUrl = movie.coverUrl || null;
 
         return (
           <ListItem
@@ -191,10 +189,12 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
             sx={{ mb: 0.75 }}
           >
             <Paper
-              variant="outlined"
               sx={{
-                bgcolor: selected ? 'action.selected' : 'background.default',
-                borderColor: selected ? 'primary.main' : 'divider',
+                bgcolor: selected ? 'rgba(91, 43, 174, 0.35)' : 'rgba(15, 20, 45, 0.86)',
+                border: '1px solid',
+                borderColor: selected ? 'rgba(139, 92, 246, 0.82)' : 'rgba(148, 163, 184, 0.18)',
+                borderRadius: 1,
+                boxShadow: selected ? '0 0 0 1px rgba(139, 92, 246, 0.18), 0 14px 34px rgba(91, 43, 174, 0.22)' : 'none',
                 overflow: 'hidden',
                 width: '100%'
               }}
@@ -205,9 +205,11 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
                 sx={{
                   alignItems: 'center',
                   display: 'grid',
-                  gap: { sm: 1, xs: 0.75 },
-                  gridTemplateColumns: { sm: 'auto 82px minmax(0, 1fr) auto', xs: 'auto 64px minmax(0, 1fr)' },
-                  p: { sm: 1.25, xs: 1 }
+                  gap: 1.25,
+                  gridTemplateColumns: '28px minmax(0, 1fr) auto',
+                  minHeight: 62,
+                  p: 1,
+                  position: 'relative'
                 }}
               >
                 <Checkbox
@@ -220,20 +222,34 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
                   }}
                   onClick={event => event.stopPropagation()}
                   size="small"
-                  sx={{ p: { sm: 1, xs: 0.5 } }}
+                  sx={{
+                    display: selectedPaths.size > 0 ? 'inline-flex' : 'none',
+                    p: 0.5,
+                    position: 'absolute',
+                    right: 28,
+                    top: 14,
+                    zIndex: 1
+                  }}
                 />
-                <ListItemAvatar sx={{ minWidth: { sm: 82, xs: 64 } }}>
-                  <MovieThumb coverUrl={coverUrl} generating={movie.coverGenerating} version={coverVersions[coverUrl]} />
+                <ListItemAvatar sx={{ minWidth: 28 }}>
+                  <Avatar
+                    variant="rounded"
+                    sx={{
+                      bgcolor: 'rgba(6, 182, 212, 0.16)',
+                      color: 'secondary.main',
+                      height: 28,
+                      width: 28
+                    }}
+                  >
+                    <PlayArrowIcon sx={{ fontSize: 18 }} />
+                  </Avatar>
                 </ListItemAvatar>
                 <ListItemText
-                  primary={movie.displayName || movie.name}
+                  primary={movie.episodeNumber ? `Tập ${movie.episodeNumber}` : movie.displayName || movie.name}
                   primaryTypographyProps={{ fontWeight: 800, noWrap: true, variant: 'body2' }}
                   sx={{ minWidth: 0, my: 0 }}
                   secondary={
                     <Stack direction="row" spacing={1.25} sx={{ flexWrap: 'wrap', minWidth: 0, rowGap: 0 }}>
-                      <Typography color="text.secondary" noWrap variant="caption">
-                        {movie.folder || 'Root'}
-                      </Typography>
                       <Typography color="text.secondary" variant="caption">
                         {formatDuration(movie.durationSeconds)}
                       </Typography>
@@ -245,19 +261,7 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
                     </Stack>
                   }
                 />
-                <Chip
-                  color={getStatusColor(movie)}
-                  icon={getStatusIcon(movie)}
-                  label={getStatusLabel(movie)}
-                  size="small"
-                  sx={{
-                    gridColumn: { sm: 'auto', xs: '2 / -1' },
-                    justifySelf: { sm: 'end', xs: 'start' },
-                    minWidth: 78,
-                    mt: { sm: 0, xs: 0.25 }
-                  }}
-                  variant="filled"
-                />
+                <KeyboardArrowRightIcon color={selected ? 'secondary' : 'disabled'} fontSize="small" />
               </ListItemButton>
             </Paper>
           </ListItem>
@@ -324,10 +328,9 @@ function MetadataEditor({ movie, onSaved }) {
     <Stack spacing={1.25}>
       <Box
         sx={{
-          alignItems: 'flex-start',
           display: 'grid',
           gap: 1.25,
-          gridTemplateColumns: { sm: isSeries ? '1fr 142px auto' : '1fr auto', xs: '1fr' }
+          gridTemplateColumns: '1fr'
         }}
       >
         <TextField
@@ -340,15 +343,16 @@ function MetadataEditor({ movie, onSaved }) {
         />
         {isSeries ? (
           <TextField
+            fullWidth
             inputProps={{ min: 1, step: 1 }}
-            label="Episode start"
+            label="Episode"
             onChange={event => setEpisodeStart(event.target.value)}
             size="small"
             type="number"
             value={episodeStart}
           />
         ) : null}
-        <Button disabled={saving} onClick={handleSave} startIcon={saving ? <CircularProgress size={16} /> : <SaveIcon />} sx={{ width: { sm: 'auto', xs: '100%' } }} variant="contained">
+        <Button disabled={saving} onClick={handleSave} startIcon={saving ? <CircularProgress size={16} /> : <SaveIcon />} sx={{ justifySelf: 'start', width: { sm: 140, xs: '100%' } }} variant="outlined">
           {saving ? 'Saving' : 'Save'}
         </Button>
       </Box>
@@ -424,7 +428,7 @@ function CoverUploader({ movie, onUploaded }) {
 
   return (
     <Stack spacing={1}>
-      <Stack direction={{ sm: 'row', xs: 'column' }} spacing={1} sx={{ alignItems: { sm: 'center', xs: 'stretch' } }}>
+      <Stack direction={{ sm: 'row', xs: 'column' }} spacing={1} sx={{ alignItems: 'stretch' }}>
         <input
           accept={COVER_TYPES.join(',')}
           hidden
@@ -436,7 +440,7 @@ function CoverUploader({ movie, onUploaded }) {
           disabled={uploading || generating || !movie.link}
           onClick={handleGenerate}
           startIcon={generating ? <CircularProgress size={16} /> : <ImageSearchIcon />}
-          sx={{ width: { sm: 'auto', xs: '100%' } }}
+          sx={{ flex: 1 }}
           variant="contained"
         >
           {generating ? 'Generating' : 'Generate Cover'}
@@ -445,14 +449,11 @@ function CoverUploader({ movie, onUploaded }) {
           disabled={uploading || generating}
           onClick={() => inputRef.current?.click()}
           startIcon={uploading ? <CircularProgress size={16} /> : <CloudUploadIcon />}
-          sx={{ width: { sm: 'auto', xs: '100%' } }}
+          sx={{ flex: 1 }}
           variant="outlined"
         >
           {uploading ? 'Uploading' : 'Upload Cover'}
         </Button>
-        <Typography color="text.secondary" sx={{ px: { sm: 0, xs: 0.25 } }} variant="caption">
-          JPEG, PNG, WebP up to 10MB
-        </Typography>
       </Stack>
       {status ? (
         <Alert severity={statusType} variant="outlined">
@@ -578,7 +579,8 @@ function DirectPlaybackPanel({ movie, onCompatibleCreated }) {
   return (
     <Stack spacing={1.5}>
       <Box>
-        <Typography color="text.secondary" sx={{ mb: 0.75 }} variant="caption">
+        <Typography sx={{ alignItems: 'center', color: 'text.primary', display: 'flex', fontWeight: 800, gap: 0.75, mb: 2 }} variant="body2">
+          <VolumeUpOutlinedIcon color="secondary" sx={{ fontSize: 16 }} />
           Direct playback
         </Typography>
         {sourceResolution ? (
@@ -706,7 +708,7 @@ function Player({ movie, active }) {
   );
 }
 
-function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
+function DetailsPanel({ coverVersions, movie, onDeleteRequest, onPreview, onReload }) {
   if (!movie) {
     return (
       <SectionCard title="Episode Details" sx={{ minHeight: { lg: 642, xs: 320 } }}>
@@ -727,96 +729,95 @@ function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
 
   const coverUrl = movie.coverUrl || null;
   return (
-    <SectionCard
-      action={
-        <Chip
-          color={getStatusColor(movie)}
-          icon={getStatusIcon(movie)}
-          label={getStatusLabel(movie)}
-          size="small"
-          variant="filled"
-        />
-      }
-      title="Episode Details"
-      sx={{ minHeight: { lg: 642, xs: 0 } }}
-    >
-      <CardContent sx={{ p: { sm: 2, xs: 1.5 }, '&:last-child': { pb: { sm: 2, xs: 1.5 } } }}>
-        <Stack spacing={2}>
-          <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ fontSize: { sm: '1.2rem', xs: '1.05rem' }, overflowWrap: 'anywhere' }} variant="h5">
-                {movie.displayName || movie.name}
-              </Typography>
-              <Typography color="text.secondary" sx={{ mt: 0.5, overflowWrap: 'anywhere' }} variant="caption">
-                {movie.path}
-              </Typography>
-            </Box>
-          </Stack>
-
+    <Stack spacing={1.5}>
+      <Box
+        sx={{
+          alignItems: 'center',
+          aspectRatio: '16 / 9',
+          bgcolor: '#050814',
+          border: '1px solid',
+          borderColor: 'rgba(148, 163, 184, 0.22)',
+          borderRadius: 1,
+          color: 'text.secondary',
+          display: 'flex',
+          justifyContent: 'center',
+          overflow: 'hidden',
+          position: 'relative'
+        }}
+      >
+        {coverUrl ? (
           <Box
-            sx={{
-              alignItems: 'center',
-              aspectRatio: { sm: '16 / 6.3', xs: '16 / 8.5' },
-              bgcolor: 'grey.950',
-              border: 1,
-              borderColor: 'divider',
-              borderRadius: 1,
-              color: 'text.secondary',
-              display: 'flex',
-              justifyContent: 'center',
-              overflow: 'hidden'
-            }}
-          >
-            {coverUrl ? (
-              <Box
-                alt=""
-                component="img"
-                src={`${coverUrl}?v=${coverVersions[coverUrl] || 0}`}
-                sx={{ height: '100%', objectFit: 'cover', width: '100%' }}
-              />
-            ) : movie.coverGenerating ? (
-              <Stack spacing={1} sx={{ alignItems: 'center' }}>
-                <CircularProgress color="inherit" size={22} />
-                <Typography variant="body2">Generating cover...</Typography>
-              </Stack>
-            ) : (
-              <Typography variant="body2">No cover</Typography>
-            )}
-          </Box>
-
-          <CoverUploader movie={movie} onUploaded={onReload} />
-          <Divider />
-          <MetadataEditor movie={movie} onSaved={onReload} />
-          <Divider />
-          <DirectPlaybackPanel movie={movie} onCompatibleCreated={onReload} />
-          <Divider />
-          <Stack direction={{ sm: 'row', xs: 'column' }} spacing={1} sx={{ alignItems: { sm: 'center', xs: 'stretch' } }}>
-            <Button color="error" onClick={() => onDeleteRequest([movie.path], false)} startIcon={<DeleteOutlineIcon />} sx={{ width: { sm: 'auto', xs: '100%' } }} variant="outlined">
-              Delete Generated Assets
-            </Button>
-            <Button color="error" onClick={() => onDeleteRequest([movie.path], true)} startIcon={<DeleteForeverIcon />} sx={{ width: { sm: 'auto', xs: '100%' } }} variant="contained">
-              Delete Movie File
-            </Button>
+            alt={movie.displayName || movie.name}
+            component="img"
+            src={`${coverUrl}?v=${coverVersions[coverUrl] || 0}`}
+            sx={{ height: '100%', objectFit: 'cover', width: '100%' }}
+          />
+        ) : movie.coverGenerating ? (
+          <Stack spacing={1} sx={{ alignItems: 'center' }}>
+            <CircularProgress color="inherit" size={22} />
+            <Typography variant="body2">Generating cover...</Typography>
           </Stack>
+        ) : (
+          <Typography variant="body2">{movie.displayName || movie.name}</Typography>
+        )}
+        <Button
+          onClick={onPreview}
+          startIcon={<PlayArrowIcon />}
+          sx={{
+            bgcolor: 'primary.main',
+            left: '50%',
+            position: 'absolute',
+            top: '50%',
+            transform: 'translate(-50%, -50%)',
+            '&:hover': { bgcolor: 'primary.dark' }
+          }}
+          variant="contained"
+        >
+          Preview
+        </Button>
+      </Box>
 
-          <Paper
-            variant="outlined"
-            sx={{
-              alignItems: 'center',
-              display: 'flex',
-              gap: 1,
-              minWidth: 0,
-              p: 1.25
-            }}
-          >
-            <LinkIcon color="primary" fontSize="small" />
-            <Typography color="text.secondary" sx={{ minWidth: 0, overflowWrap: 'anywhere' }} variant="caption">
-              {movie.link}
-            </Typography>
-          </Paper>
-        </Stack>
-      </CardContent>
-    </SectionCard>
+      <CoverUploader movie={movie} onUploaded={onReload} />
+
+      <Card variant="outlined" sx={{ bgcolor: 'rgba(16, 20, 43, 0.86)', borderColor: 'rgba(148, 163, 184, 0.2)' }}>
+        <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+          <MetadataEditor movie={movie} onSaved={onReload} />
+        </CardContent>
+      </Card>
+
+      <Card variant="outlined" sx={{ bgcolor: 'rgba(16, 20, 43, 0.86)', borderColor: 'rgba(148, 163, 184, 0.2)' }}>
+        <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+          <DirectPlaybackPanel movie={movie} onCompatibleCreated={onReload} />
+        </CardContent>
+      </Card>
+
+      <Stack direction={{ sm: 'row', xs: 'column' }} spacing={1} sx={{ alignItems: 'stretch' }}>
+        <Button color="error" onClick={() => onDeleteRequest([movie.path], false)} startIcon={<DeleteOutlineIcon />} sx={{ flex: 1 }} variant="outlined">
+          Delete Assets
+        </Button>
+        <Button color="error" onClick={() => onDeleteRequest([movie.path], true)} startIcon={<DeleteForeverIcon />} sx={{ flex: 1 }} variant="outlined">
+          Delete File
+        </Button>
+      </Stack>
+
+      <Paper
+        variant="outlined"
+        sx={{
+          alignItems: 'center',
+          bgcolor: 'rgba(8, 12, 28, 0.7)',
+          borderColor: 'rgba(148, 163, 184, 0.16)',
+          display: 'flex',
+          gap: 1,
+          minWidth: 0,
+          p: 1.25
+        }}
+      >
+        <LinkIcon color="primary" fontSize="small" />
+        <Typography color="text.secondary" sx={{ minWidth: 0, overflowWrap: 'anywhere' }} variant="caption">
+          {movie.link}
+        </Typography>
+      </Paper>
+    </Stack>
   );
 }
 
@@ -874,12 +875,28 @@ export default function App() {
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [mobileTab, setMobileTab] = useState('list');
+  const [detailTab, setDetailTab] = useState('details');
+  const [searchTerm, setSearchTerm] = useState('');
   const isMobileLayout = useMediaQuery(theme => theme.breakpoints.down('lg'));
 
   const selectedMovie = useMemo(
     () => movies.find(movie => movie.path === selectedPath) || null,
     [movies, selectedPath]
   );
+  const filteredMovies = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    if (!query) return movies;
+    return movies.filter(movie => {
+      const haystack = [
+        movie.displayName,
+        movie.name,
+        movie.folder,
+        movie.path,
+        movie.episodeNumber ? `tap ${movie.episodeNumber}` : ''
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [movies, searchTerm]);
 
   const loadMovies = useCallback(async (preferredPath, options = {}) => {
     if (!options.silent) setLoading(true);
@@ -962,104 +979,125 @@ export default function App() {
   const readyForPlayer = Boolean(selectedMovie?.link);
   const deleteLabel = pendingDelete?.deleteOriginal ? 'movie files and generated assets' : 'generated assets';
   const fileManagerPanel = (
-    <SectionCard
-      action={
-        <Chip
-          icon={<VideoLibraryIcon />}
-          label={loading ? 'Loading' : `${movies.length} files`}
-          size="small"
-          variant="outlined"
-        />
-      }
-      title="File Manager"
-    >
+    <Stack spacing={1.5}>
+      <SectionCard
+        action={null}
+        title="Local Movies"
+        sx={{ minHeight: 132 }}
+      >
+        <CardContent sx={{ px: 2, pt: 2.5, pb: 1.5, '&:last-child': { pb: 1.5 } }}>
+          <Typography color="text.secondary" noWrap variant="caption">
+            D:/Movies
+          </Typography>
+          <Stack direction="row" spacing={1} sx={{ mt: 3 }}>
+            <Chip label={`${movies.length} items`} size="small" sx={{ bgcolor: 'rgba(148, 163, 184, 0.14)', fontWeight: 800 }} />
+            <Chip label={`${movies.filter(movie => movie.link).length} playable`} size="small" sx={{ bgcolor: 'rgba(148, 163, 184, 0.2)', fontWeight: 800 }} />
+          </Stack>
+        </CardContent>
+      </SectionCard>
+
+      <TextField
+        fullWidth
+        onChange={event => setSearchTerm(event.target.value)}
+        placeholder="Search episodes..."
+        size="small"
+        value={searchTerm}
+        InputProps={{
+          startAdornment: <SearchIcon sx={{ color: 'text.secondary', fontSize: 20, mr: 1 }} />
+        }}
+        sx={{
+          '& .MuiOutlinedInput-root': {
+            bgcolor: 'rgba(16, 20, 43, 0.86)',
+            borderRadius: 1
+          }
+        }}
+      />
+
       <MovieList
-        coverVersions={coverVersions}
         loading={loading}
-        movies={movies}
+        movies={filteredMovies}
         onSelect={handleSelectMovie}
         onToggleSelect={toggleSelected}
         selectedPath={selectedPath}
         selectedPaths={selectedPaths}
       />
-    </SectionCard>
+    </Stack>
   );
   const detailsPanel = (
-    <Stack spacing={2}>
-      <DetailsPanel
-        coverVersions={coverVersions}
-        movie={selectedMovie}
-        onDeleteRequest={requestDelete}
-        onReload={reloadMoviesAndBustCover}
-      />
-      <Player active={Boolean(readyForPlayer)} movie={selectedMovie} />
+    <Stack spacing={1.5}>
+      <Tabs
+        onChange={(_, value) => setDetailTab(value)}
+        value={detailTab}
+        sx={{
+          alignSelf: 'flex-start',
+          border: '1px solid rgba(148, 163, 184, 0.22)',
+          borderRadius: 1,
+          minHeight: 36,
+          '& .MuiTab-root': { minHeight: 36, px: 1.5 },
+          '& .MuiTabs-indicator': { display: 'none' }
+        }}
+      >
+        <Tab label="Details" value="details" />
+        <Tab label="Files" value="files" />
+        <Tab label="Player" value="player" />
+      </Tabs>
+
+      {detailTab === 'details' ? (
+        <DetailsPanel
+          coverVersions={coverVersions}
+          movie={selectedMovie}
+          onDeleteRequest={requestDelete}
+          onPreview={() => setDetailTab('player')}
+          onReload={reloadMoviesAndBustCover}
+        />
+      ) : null}
+      {detailTab === 'files' ? (
+        <SectionCard title="File Info">
+          <CardContent>
+            <Typography color="text.secondary" sx={{ overflowWrap: 'anywhere' }} variant="body2">
+              {selectedMovie?.path || 'Select a movie to inspect its source file.'}
+            </Typography>
+          </CardContent>
+        </SectionCard>
+      ) : null}
+      {detailTab === 'player' ? <Player active={Boolean(readyForPlayer)} movie={selectedMovie} /> : null}
     </Stack>
   );
 
   return (
     <Box sx={{ minHeight: '100vh', pb: 12 }}>
-      <AppBar color="transparent" elevation={0} position="sticky" sx={{ backdropFilter: 'blur(18px)', borderBottom: 1, borderColor: 'divider' }}>
-        <Toolbar sx={{ gap: 2, mx: 'auto', width: 'min(1220px, 100%)' }}>
+      <AppBar color="transparent" elevation={0} position="sticky" sx={{ bgcolor: 'rgba(10, 14, 35, 0.88)', backdropFilter: 'blur(18px)', borderBottom: '1px solid rgba(148, 163, 184, 0.14)' }}>
+        <Toolbar sx={{ gap: 1.25, minHeight: 76, mx: 'auto', width: 'min(1180px, 100%)' }}>
           <Avatar
             variant="rounded"
             sx={{
-              bgcolor: 'primary.main',
+              background: 'linear-gradient(135deg, #8b5cf6 0%, #22d3ee 100%)',
               color: 'primary.contrastText',
               fontSize: 18,
-              fontStyle: 'italic',
-              fontWeight: 900,
               height: 42,
               width: 42
             }}
           >
-            STV
+            <PlayArrowIcon />
           </Avatar>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography noWrap variant="h6">
-              StreamTV CMS Admin
+              StreamTV
             </Typography>
             <Typography color="text.secondary" noWrap variant="caption">
-              Direct MKV streaming dashboard
+              Content Management System
             </Typography>
           </Box>
+          <Tooltip title="Settings">
+            <IconButton aria-label="Settings" size="small">
+              <SettingsOutlinedIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
         </Toolbar>
       </AppBar>
 
-      <Box component="main" sx={{ mx: 'auto', p: { md: 3, xs: 1.5 }, width: 'min(1220px, 100%)' }}>
+      <Box component="main" sx={{ mx: 'auto', p: { md: 3, xs: 1.5 }, width: 'min(1180px, 100%)' }}>
         <Stack spacing={2}>
-          <Paper
-            variant="outlined"
-            sx={{
-              alignItems: { sm: 'center', xs: 'flex-start' },
-              display: 'flex',
-              flexDirection: { sm: 'row', xs: 'column' },
-              gap: 1.5,
-              justifyContent: 'space-between',
-              p: 1.5
-            }}
-          >
-            <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', minWidth: 0 }}>
-              <Avatar sx={{ bgcolor: 'action.selected', color: 'primary.light' }}>
-                <FolderIcon />
-              </Avatar>
-              <Box sx={{ minWidth: 0 }}>
-                <Typography variant="subtitle2">Local Movies</Typography>
-                <Typography color="text.secondary" noWrap variant="caption">
-                  D:/Movies
-                </Typography>
-              </Box>
-            </Stack>
-            <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-              <Chip label={`${movies.length} items`} size="small" variant="outlined" />
-              <Chip
-                color="success"
-                label={`${movies.filter(movie => movie.link).length} playable`}
-                size="small"
-                variant="outlined"
-              />
-            </Stack>
-          </Paper>
-
           <Paper
             variant="outlined"
             sx={{
@@ -1086,7 +1124,7 @@ export default function App() {
               alignItems: 'flex-start',
               display: { lg: 'grid', xs: 'none' },
               gap: 2,
-              gridTemplateColumns: 'minmax(0, 0.95fr) minmax(0, 1.05fr)'
+              gridTemplateColumns: '360px minmax(0, 1fr)'
             }}
           >
             {fileManagerPanel}

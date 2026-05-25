@@ -8,15 +8,15 @@ const theme = createTheme({
   palette: {
     mode: 'dark',
     background: {
-      default: '#0b1018',
-      paper: '#111927'
+      default: '#070b1d',
+      paper: '#10142b'
     },
     primary: {
-      main: '#7c4dff',
-      light: '#b69cff'
+      main: '#8b5cf6',
+      light: '#b794ff'
     },
     secondary: {
-      main: '#26c6da'
+      main: '#06b6d4'
     },
     success: {
       main: '#2e7d32'
@@ -60,6 +60,16 @@ const theme = createTheme({
     MuiButton: {
       defaultProps: {
         disableElevation: true
+      },
+      styleOverrides: {
+        root: {
+          borderRadius: 7
+        }
+      }
+    },
+    MuiTextField: {
+      defaultProps: {
+        variant: 'outlined'
       }
     }
   }
