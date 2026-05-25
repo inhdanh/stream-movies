@@ -115,7 +115,7 @@ function SectionCard({ title, action, children, sx }) {
   );
 }
 
-function MovieThumb({ coverUrl, version }) {
+function MovieThumb({ coverUrl, generating, version }) {
   return (
     <Avatar
       variant="rounded"
@@ -130,7 +130,9 @@ function MovieThumb({ coverUrl, version }) {
         width: 72
       }}
     >
-      {coverUrl ? (
+      {generating ? (
+        <CircularProgress color="inherit" size={18} />
+      ) : coverUrl ? (
         <Box
           alt=""
           component="img"
@@ -216,7 +218,7 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
                   size="small"
                 />
                 <ListItemAvatar sx={{ minWidth: 82 }}>
-                  <MovieThumb coverUrl={coverUrl} version={coverVersions[coverUrl]} />
+                  <MovieThumb coverUrl={coverUrl} generating={movie.coverGenerating} version={coverVersions[coverUrl]} />
                 </ListItemAvatar>
                 <ListItemText
                   primary={movie.displayName || movie.name}
@@ -229,6 +231,11 @@ function MovieList({ coverVersions, movies, selectedPath, selectedPaths, loading
                       <Typography color="text.secondary" variant="caption">
                         {formatDuration(movie.durationSeconds)}
                       </Typography>
+                      {movie.coverGenerating ? (
+                        <Typography color="primary.light" variant="caption">
+                          Auto cover
+                        </Typography>
+                      ) : null}
                     </Stack>
                   }
                 />
@@ -687,6 +694,11 @@ function DetailsPanel({ coverVersions, movie, onDeleteRequest, onReload }) {
                 src={`${coverUrl}?v=${coverVersions[coverUrl] || 0}`}
                 sx={{ height: '100%', objectFit: 'cover', width: '100%' }}
               />
+            ) : movie.coverGenerating ? (
+              <Stack spacing={1} sx={{ alignItems: 'center' }}>
+                <CircularProgress color="inherit" size={22} />
+                <Typography variant="body2">Generating cover...</Typography>
+              </Stack>
             ) : (
               <Typography variant="body2">No cover</Typography>
             )}
@@ -804,8 +816,8 @@ export default function App() {
     [movies, selectedPath]
   );
 
-  const loadMovies = useCallback(async preferredPath => {
-    setLoading(true);
+  const loadMovies = useCallback(async (preferredPath, options = {}) => {
+    if (!options.silent) setLoading(true);
     try {
       const nextMovies = await fetchMovies();
       setMovies(nextMovies);
@@ -818,7 +830,7 @@ export default function App() {
     } catch (error) {
       setNotice(error.message || 'Failed to load movies.');
     } finally {
-      setLoading(false);
+      if (!options.silent) setLoading(false);
     }
   }, []);
 
@@ -837,6 +849,14 @@ export default function App() {
   useEffect(() => {
     loadMovies();
   }, [loadMovies]);
+
+  useEffect(() => {
+    if (!movies.some(movie => movie.coverGenerating)) return undefined;
+    const timer = window.setTimeout(() => {
+      loadMovies(selectedPath, { silent: true });
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [loadMovies, movies, selectedPath]);
 
   function toggleSelected(path) {
     setSelectedPaths(current => {

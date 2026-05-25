@@ -22,6 +22,8 @@ const COVER_UPLOAD_TYPES = new Map([
   ['image/png', '.png'],
   ['image/webp', '.webp']
 ]);
+const AUTO_COVER_ENABLED = process.env.AUTO_COVER_ENABLED !== 'false';
+const AUTO_COVER_RETRY_MS = 15 * 60 * 1000;
 
 const VIDEO_CONTENT_TYPES = new Map([
   ['.mkv', 'video/x-matroska'],
@@ -31,6 +33,9 @@ const VIDEO_CONTENT_TYPES = new Map([
   ['.avi', 'video/x-msvideo'],
   ['.wmv', 'video/x-ms-wmv']
 ]);
+
+const autoCoverJobs = new Map();
+let autoCoverQueue = Promise.resolve();
 
 function resolveMoviePath(filename) {
   const filePath = path.resolve(MOVIES_DIR, filename);
@@ -169,6 +174,17 @@ function getCoverUrl(coverBasePath) {
   return `/covers/${coverBasePath.split('/').map(encodeURIComponent).join('/')}/${COVER_IMAGE_NAME}`;
 }
 
+function getAutoCoverStatus(coverBasePath) {
+  if (!coverBasePath) return null;
+  const job = autoCoverJobs.get(coverBasePath);
+  if (!job) return null;
+  return {
+    status: job.status,
+    error: job.error || null,
+    updatedAt: job.updatedAt
+  };
+}
+
 function serializeMovie(movie) {
   const filePath = resolveMoviePath(movie.path);
   const fallbackPaths = filePath
@@ -195,6 +211,10 @@ function serializeMovie(movie) {
     sourceWidth: movie.sourceWidth,
     sourceHeight: movie.sourceHeight,
     coverUrl: movie.coverBasePath ? getCoverUrl(movie.coverBasePath) : null,
+    coverGenerating: ['queued', 'running'].includes(movie.autoCoverStatus?.status),
+    coverGenerationError: movie.autoCoverStatus?.status === 'failed'
+      ? movie.autoCoverStatus.error
+      : null,
     link: getMediaUrl(movie.path),
     fallbackLink
   };
@@ -457,6 +477,105 @@ async function generateCoverImage(filename) {
   return coverBasePath;
 }
 
+function hasCoverImage(coverBasePath) {
+  const outputDir = resolveCoverPath(coverBasePath);
+  return Boolean(outputDir && fs.existsSync(path.join(outputDir, COVER_IMAGE_NAME)));
+}
+
+function queueAutoCoverGeneration(filename) {
+  const coverBasePath = getCoverBasePath(filename);
+  if (!coverBasePath || hasCoverImage(coverBasePath)) {
+    return false;
+  }
+
+  const existingJob = autoCoverJobs.get(coverBasePath);
+  const now = Date.now();
+  if (existingJob) {
+    if (['queued', 'running'].includes(existingJob.status)) return false;
+    if (existingJob.status === 'failed' && now - existingJob.updatedAt < AUTO_COVER_RETRY_MS) {
+      return false;
+    }
+  }
+
+  autoCoverJobs.set(coverBasePath, {
+    error: null,
+    filename,
+    status: 'queued',
+    updatedAt: now
+  });
+
+  autoCoverQueue = autoCoverQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const runningJob = autoCoverJobs.get(coverBasePath);
+      if (!runningJob || hasCoverImage(coverBasePath)) {
+        return;
+      }
+
+      autoCoverJobs.set(coverBasePath, {
+        ...runningJob,
+        status: 'running',
+        updatedAt: Date.now()
+      });
+
+      try {
+        await generateCoverImage(filename);
+        autoCoverJobs.set(coverBasePath, {
+          ...runningJob,
+          error: null,
+          status: 'done',
+          updatedAt: Date.now()
+        });
+        console.log(`[Cover] Auto-generated cover for ${filename}`);
+      } catch (error) {
+        autoCoverJobs.set(coverBasePath, {
+          ...runningJob,
+          error: error.message || 'Failed to generate cover',
+          status: 'failed',
+          updatedAt: Date.now()
+        });
+        console.warn(`[Cover] Auto-cover failed for ${filename}: ${error.message}`);
+      }
+    });
+
+  return true;
+}
+
+function queueMissingCoverImages(movies) {
+  if (!AUTO_COVER_ENABLED) {
+    return { enabled: false, queued: 0, active: 0 };
+  }
+
+  let queued = 0;
+  const seenCoverBasePaths = new Set();
+
+  for (const movie of movies) {
+    if (movie.coverBasePath || !movie.path) continue;
+
+    const coverBasePath = getCoverBasePath(movie.path);
+    if (seenCoverBasePaths.has(coverBasePath)) continue;
+    seenCoverBasePaths.add(coverBasePath);
+
+    if (queueAutoCoverGeneration(movie.path)) {
+      queued++;
+    }
+  }
+
+  const active = Array.from(autoCoverJobs.values())
+    .filter(job => ['queued', 'running'].includes(job.status))
+    .length;
+
+  return { enabled: true, queued, active };
+}
+
+function withAutoCoverStatus(movie) {
+  const coverBasePath = movie.coverBasePath || getCoverBasePath(movie.path);
+  return {
+    ...movie,
+    autoCoverStatus: getAutoCoverStatus(coverBasePath)
+  };
+}
+
 // Ensure generated asset directories exist
 if (!fs.existsSync(COVERS_DIR)) {
   fs.mkdirSync(COVERS_DIR, { recursive: true });
@@ -469,7 +588,11 @@ app.use(express.json());
 app.get('/movies', async (req, res) => {
   try {
     const movies = await scanMovies(MOVIES_DIR, '', { coversDir: COVERS_DIR });
-    res.json({ movies: movies.map(serializeMovie) });
+    const autoCover = queueMissingCoverImages(movies);
+    res.json({
+      movies: movies.map(movie => serializeMovie(withAutoCoverStatus(movie))),
+      autoCover
+    });
   } catch (error) {
     console.error('Error scanning movies:', error);
     res.status(500).json({ error: 'Failed to scan movies directory' });
