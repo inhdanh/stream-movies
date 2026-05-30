@@ -654,6 +654,10 @@ function withAutoAacTranscodeStatus(movie) {
   };
 }
 
+async function loadMoviesFromDisk() {
+  return scanMovies(MOVIES_DIR, '', { coversDir: COVERS_DIR });
+}
+
 // Ensure generated asset directories exist
 if (!fs.existsSync(COVERS_DIR)) {
   fs.mkdirSync(COVERS_DIR, { recursive: true });
@@ -665,7 +669,8 @@ app.use(express.json());
 // 1. Get list of movies
 app.get('/movies', async (req, res) => {
   try {
-    const movies = await scanMovies(MOVIES_DIR, '', { coversDir: COVERS_DIR });
+    res.setHeader('Cache-Control', 'no-store');
+    const movies = await loadMoviesFromDisk();
     const autoCover = queueMissingCoverImages(movies);
     res.json({
       movies: movies.map(movie => serializeMovie(withAutoAacTranscodeStatus(withAutoCoverStatus(movie)))),
